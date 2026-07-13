@@ -144,6 +144,45 @@ func TestLoadingWriter_SendDataFormat(t *testing.T) {
 	}
 }
 
+func TestLoadingWriter_SendDataIncludesChoiceIndex(t *testing.T) {
+	logger := logmon.NewWriter(io.Discard)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	lw := newLoadingWriter(logger, "test-model", w, req)
+	lw.sendData("hello world")
+
+	body := w.Body.String()
+
+	var msg struct {
+		Choices []struct {
+			Index int `json:"index"`
+			Delta struct {
+				ReasoningContent string `json:"reasoning_content"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		jsonData := strings.TrimPrefix(line, "data: ")
+		if err := json.Unmarshal([]byte(jsonData), &msg); err != nil {
+			continue
+		}
+		if len(msg.Choices) == 0 {
+			t.Errorf("expected at least one choice in SSE data, body: %s", body)
+			return
+		}
+		if msg.Choices[0].Index != 0 {
+			t.Errorf("expected choice index 0, got %d", msg.Choices[0].Index)
+		}
+		return
+	}
+	t.Errorf("no valid SSE data line found in body: %s", body)
+}
+
 func TestLoadingWriter_SendLine(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
