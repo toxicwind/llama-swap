@@ -202,6 +202,7 @@ func (s *loadingWriter) sendData(data string) {
 		ReasoningContent string `json:"reasoning_content"`
 	}
 	type Choice struct {
+		Index int   `json:"index"`
 		Delta Delta `json:"delta"`
 	}
 	type SSEMessage struct {
@@ -211,6 +212,7 @@ func (s *loadingWriter) sendData(data string) {
 	msg := SSEMessage{
 		Choices: []Choice{
 			{
+				Index: 0,
 				Delta: Delta{
 					ReasoningContent: data,
 				},
