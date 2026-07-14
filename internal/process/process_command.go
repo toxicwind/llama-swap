@@ -424,6 +424,15 @@ func (p *ProcessCommand) doStart(startCtx context.Context, healthCheckTimeout ti
 
 	p.proxyLogger.Debugf("<%s> Executing start command: %s, env: %s", p.id, strings.Join(args, " "), strings.Join(p.config.Env, ", "))
 
+	// Free any stale process holding the target port before spawning
+	for i, a := range args {
+		if a == "--port" && i+1 < len(args) {
+			portCleanup := exec.Command("fuser", "-k", args[i+1]+"/tcp")
+			_ = portCleanup.Run()
+			break
+		}
+	}
+
 	cmdDone := make(chan struct{})
 	if err := cmd.Start(); err != nil {
 		cmdCancel()
