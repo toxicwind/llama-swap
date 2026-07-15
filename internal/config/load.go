@@ -314,6 +314,11 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 			modelConfig.SendLoadingState = &v
 		}
 
+		if modelConfig.NormalizeSSE == nil {
+			v := config.Upstream.NormalizeSSE
+			modelConfig.NormalizeSSE = &v
+		}
+
 		config.Models[modelId] = modelConfig
 	}
 

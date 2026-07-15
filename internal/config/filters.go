@@ -4,6 +4,8 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ProtectedParams is a list of parameters that cannot be set or stripped via filters
@@ -26,6 +28,29 @@ type Filters struct {
 	// which alias the client used. Applied after SetParams, so it can override those values.
 	// Protected params (like "model") cannot be set.
 	SetParamsByID map[string]map[string]any `yaml:"setParamsByID"`
+}
+
+// rawFilters is the intermediate form for unmarshaling Filters from YAML.
+// It supports both stripParams and the legacy strip_params key.
+type rawFilters struct {
+	StripParams   string                    `yaml:"stripParams"`
+	LegacyStrip   string                    `yaml:"strip_params"`
+	SetParams     map[string]any            `yaml:"setParams"`
+	SetParamsByID map[string]map[string]any `yaml:"setParamsByID"`
+}
+
+func (f *Filters) UnmarshalYAML(value *yaml.Node) error {
+	var raw rawFilters
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	f.StripParams = raw.StripParams
+	if f.StripParams == "" {
+		f.StripParams = raw.LegacyStrip
+	}
+	f.SetParams = raw.SetParams
+	f.SetParamsByID = raw.SetParamsByID
+	return nil
 }
 
 // SanitizedStripParams returns a sorted list of parameters to strip,

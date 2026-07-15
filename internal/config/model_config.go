@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"runtime"
 
 	"gopkg.in/yaml.v3"
 )
@@ -81,8 +80,6 @@ func (c ModelCapConfig) Empty() bool {
 	return len(c.In) == 0 && len(c.Out) == 0 && !c.Tools && !c.Reranker && c.Context == 0
 }
 
-// Validate checks that all modality values are recognized and context is
-// non-negative. Returns an error if any value is invalid.
 func (c ModelCapConfig) Validate() error {
 	for _, m := range c.In {
 		if _, ok := validModalities[m]; !ok {
@@ -131,7 +128,7 @@ type ModelConfig struct {
 	ConcurrencyLimit int `yaml:"concurrencyLimit"`
 
 	// Model filters see issue #174
-	Filters ModelFilters `yaml:"filters"`
+	Filters Filters `yaml:"filters"`
 
 	// Macros: see #264
 	// Model level macros take precedence over the global macros
@@ -144,6 +141,11 @@ type ModelConfig struct {
 	// override global setting
 	SendLoadingState *bool `yaml:"sendLoadingState"`
 
+	// NormalizeSSE, when true, normalizes SSE streaming chunks to the
+	// canonical OpenAI chat.completion.chunk format. Inherits from the
+	// global config.upstream.normalize_sse when nil.
+	NormalizeSSE *bool `yaml:"normalize_sse"`
+
 	// Timeout settings for proxy connections
 	Timeouts TimeoutsConfig `yaml:"timeouts"`
 
@@ -152,6 +154,10 @@ type ModelConfig struct {
 
 	// Copy of HealthCheckTimeout from global config
 	HealthCheckTimeout int `yaml:"healthCheckTimeout"`
+}
+
+func (m *ModelConfig) SanitizedCommand() ([]string, error) {
+	return SanitizeCommand(m.Cmd)
 }
 
 func (m *ModelConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
@@ -178,58 +184,34 @@ func (m *ModelConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			ResponseHeader: 0,
 			TLSHandshake:   10,
 			ExpectContinue: 1,
-			IdleConn:       90,
 		},
 	}
-
-	// the default cmdStop to taskkill /f /t /pid ${PID}
-	if runtime.GOOS == "windows" {
-		defaults.CmdStop = "taskkill /f /t /pid ${PID}"
-	}
-
 	if err := unmarshal(&defaults); err != nil {
 		return err
 	}
-
 	*m = ModelConfig(defaults)
 	return nil
 }
 
-func (m *ModelConfig) SanitizedCommand() ([]string, error) {
-	return SanitizeCommand(m.Cmd)
-}
-
-// ModelFilters embeds Filters and adds legacy support for strip_params field
-// See issue #174
-type ModelFilters struct {
-	Filters `yaml:",inline"`
-}
-
-func (m *ModelFilters) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	type rawModelFilters ModelFilters
-	defaults := rawModelFilters{}
-
-	if err := unmarshal(&defaults); err != nil {
-		return err
+// ResolveMacros processes macro substitutions for all field values that may
+// contain macro references, including Capabilities which has its own resolve
+// step. Called during config loading after global macros are assembled.
+func (m *ModelConfig) ResolveMacros(macros MacroList) error {
+	resolvers := []struct {
+		name string
+		fn   func(MacroList) error
+	}{
+		{"capabilities", func(ml MacroList) error {
+			if m.Capabilities.raw != nil {
+				return m.Capabilities.ResolveMacros(ml)
+			}
+			return nil
+		}},
 	}
-
-	// Try to unmarshal with the old field name for backwards compatibility
-	if defaults.StripParams == "" {
-		var legacy struct {
-			StripParams string `yaml:"strip_params"`
+	for _, r := range resolvers {
+		if err := r.fn(macros); err != nil {
+			return fmt.Errorf("model %s: %w", m.Name, err)
 		}
-		if legacyErr := unmarshal(&legacy); legacyErr != nil {
-			return errors.New("failed to unmarshal legacy filters.strip_params: " + legacyErr.Error())
-		}
-		defaults.StripParams = legacy.StripParams
 	}
-
-	*m = ModelFilters(defaults)
 	return nil
-}
-
-// SanitizedStripParams wraps Filters.SanitizedStripParams for backwards compatibility
-// Returns ([]string, error) to match existing API
-func (f ModelFilters) SanitizedStripParams() ([]string, error) {
-	return f.Filters.SanitizedStripParams(), nil
 }
