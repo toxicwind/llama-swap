@@ -505,12 +505,14 @@ func (b *baseRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	shouldShowLoading := data.Streaming && data.SendLoadingState && isLoadingPath(req.URL.Path) && !isModelReady
 
+	var mux *sseMux
 	var lw *loadingWriter
 	cancelLoad := func() {}
 	if shouldShowLoading {
 		var swapCtx context.Context
 		swapCtx, cancelLoad = context.WithCancel(req.Context())
-		lw = newLoadingWriter(b.logger, data.ModelID, w, req)
+		mux = newSSEMux(w, b.logger, data.ModelID)
+		lw = newLoadingWriter(b.logger, data.ModelID, mux, req)
 		go lw.start(swapCtx)
 		go func() {
 			for {
@@ -524,16 +526,15 @@ func (b *baseRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}()
 	}
 
-	// finishLoading stops the loading stream and fences its goroutine off from
-	// the ResponseWriter before the real handler (or ServeHTTP's return)
-	// reclaims it. release() must run even when waitForCompletion times out:
-	// otherwise a still-streaming goroutine flushes a finalized response and
-	// panics on the recycled *bufio.Writer.
+	// finishLoading stops the loading stream and transitions the mux to phase 1
+	// (upstream). waitForCompletion must run before StartUpstream even when it
+	// times out: otherwise a still-streaming goroutine may write after the
+	// upstream handler starts.
 	finishLoading := func() {
 		cancelLoad()
 		if lw != nil {
 			lw.waitForCompletion(1 * time.Second)
-			lw.release()
+			mux.StartUpstream()
 		}
 	}
 
@@ -562,5 +563,9 @@ func (b *baseRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		shared.SendError(w, req, resp.Err)
 		return
 	}
-	resp.HandleFunc(w, req)
+	if mux != nil {
+		resp.HandleFunc(mux, req)
+	} else {
+		resp.HandleFunc(w, req)
+	}
 }

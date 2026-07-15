@@ -17,17 +17,19 @@ import (
 func TestLoadingWriter_SSEHeadersAndInitialMessage(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
+	mux := newSSEMux(w, logger, "test-model")
+	lw := newLoadingWriter(logger, "test-model", mux, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil))
+	_ = lw
 
-	if ct := lw.Header().Get("Content-Type"); ct != "text/event-stream" {
+	// Check SSE headers were set on the underlying recorder
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
 		t.Errorf("Content-Type: want text/event-stream, got %q", ct)
 	}
-	if cc := lw.Header().Get("Cache-Control"); cc != "no-cache" {
+	if cc := w.Header().Get("Cache-Control"); cc != "no-cache" {
 		t.Errorf("Cache-Control: want no-cache, got %q", cc)
 	}
-	if conn := lw.Header().Get("Connection"); conn != "keep-alive" {
+	if conn := w.Header().Get("Connection"); conn != "keep-alive" {
 		t.Errorf("Connection: want keep-alive, got %q", conn)
 	}
 
@@ -48,10 +50,11 @@ func TestLoadingWriter_SSEHeadersAndInitialMessage(t *testing.T) {
 func TestLoadingWriter_WriteHeaderOnce(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
-	lw.WriteHeader(http.StatusCreated)
+	mux := newSSEMux(w, logger, "test-model")
+	// mux constructor already wrote header 200. Subsequent WriteHeader calls
+	// (e.g. 201) must be ignored.
+	mux.WriteHeader(http.StatusCreated)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("first WriteHeader: want %d, got %d", http.StatusOK, w.Code)
@@ -61,11 +64,12 @@ func TestLoadingWriter_WriteHeaderOnce(t *testing.T) {
 func TestLoadingWriter_WritePassthrough(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
-	lw.Write([]byte("hello"))
-	lw.Flush()
+	mux := newSSEMux(w, logger, "test-model")
+	// StartUpstream switches to phase 1 so Write passes through directly
+	mux.StartUpstream()
+	mux.Write([]byte("hello"))
+	mux.Flush()
 
 	body := w.Body.String()
 	if !strings.Contains(body, "hello") {
@@ -76,14 +80,14 @@ func TestLoadingWriter_WritePassthrough(t *testing.T) {
 func TestLoadingWriter_StartStopsOnCancel(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
+	lw := newLoadingWriter(logger, "test-model", mux, req)
 	lw.tickDuration = 10 * time.Millisecond
 	lw.loopStarted = make(chan struct{})
 
 	ctx, cancel := context.WithCancel(context.Background())
-
 	go lw.start(ctx)
 	<-lw.loopStarted
 	cancel()
@@ -101,9 +105,10 @@ func TestLoadingWriter_StartStopsOnCancel(t *testing.T) {
 func TestLoadingWriter_StartShowsSetUpdate(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
+	lw := newLoadingWriter(logger, "test-model", mux, req)
 	lw.tickDuration = 10 * time.Millisecond
 	lw.charPerSecond = 0
 	lw.loopStarted = make(chan struct{})
@@ -130,9 +135,10 @@ func TestLoadingWriter_StartShowsSetUpdate(t *testing.T) {
 func TestLoadingWriter_SendDataFormat(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
+	lw := newLoadingWriter(logger, "test-model", mux, req)
 	lw.sendData("hello world")
 
 	body := w.Body.String()
@@ -147,9 +153,10 @@ func TestLoadingWriter_SendDataFormat(t *testing.T) {
 func TestLoadingWriter_SendDataIncludesChoiceIndex(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
+	lw := newLoadingWriter(logger, "test-model", mux, req)
 	lw.sendData("hello world")
 
 	body := w.Body.String()
@@ -186,9 +193,10 @@ func TestLoadingWriter_SendDataIncludesChoiceIndex(t *testing.T) {
 func TestLoadingWriter_SendLine(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
+	lw := newLoadingWriter(logger, "test-model", mux, req)
 	lw.charPerSecond = 0
 
 	// Capture only the content from this sendLine call
@@ -206,9 +214,10 @@ func TestLoadingWriter_SendLine(t *testing.T) {
 func TestLoadingWriter_FlushesPeriodicallyDuringStatusUpdates(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
+	lw := newLoadingWriter(logger, "test-model", mux, req)
 	lw.tickDuration = 10 * time.Millisecond
 	lw.charPerSecond = 0
 	lw.loopStarted = make(chan struct{})
@@ -235,9 +244,10 @@ func TestLoadingWriter_FlushesPeriodicallyDuringStatusUpdates(t *testing.T) {
 func TestLoadingWriter_ReqStored(t *testing.T) {
 	logger := logmon.NewWriter(io.Discard)
 	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 
-	lw := newLoadingWriter(logger, "test-model", w, req)
+	lw := newLoadingWriter(logger, "test-model", mux, req)
 	if lw.req != req {
 		t.Fatal("req not stored")
 	}
@@ -262,6 +272,76 @@ func TestIsLoadingPath(t *testing.T) {
 				t.Errorf("isLoadingPath(%q) = %v, want %v", tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSSEMux_WriteBuffersDuringPhase0(t *testing.T) {
+	logger := logmon.NewWriter(io.Discard)
+	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
+
+	// During phase 0, Write should buffer, not pass through
+	mux.Write([]byte("buffered data"))
+
+	body := w.Body.String()
+	if strings.Contains(body, "buffered") {
+		t.Error("phase 0 Write should buffer, not write through to dest")
+	}
+
+	// After StartUpstream, buffered data should be flushed
+	mux.StartUpstream()
+	body = w.Body.String()
+	if !strings.Contains(body, "buffered data") {
+		t.Errorf("expected buffered data after StartUpstream, body: %s", body)
+	}
+}
+
+func TestSSEMux_WritePassesThroughDuringPhase1(t *testing.T) {
+	logger := logmon.NewWriter(io.Discard)
+	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
+	mux.StartUpstream()
+
+	mux.Write([]byte("direct data"))
+	mux.Flush()
+
+	body := w.Body.String()
+	if !strings.Contains(body, "direct data") {
+		t.Errorf("expected direct data in phase 1, body: %s", body)
+	}
+}
+
+func TestSSEMux_RoleChunkEmittedOnConstruction(t *testing.T) {
+	logger := logmon.NewWriter(io.Discard)
+	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
+	_ = mux
+
+	body := w.Body.String()
+	if !strings.Contains(body, `"role":"assistant"`) {
+		t.Errorf("expected role chunk with role=assistant, body: %s", body)
+	}
+	if !strings.Contains(body, `"object":"chat.completion.chunk"`) {
+		t.Errorf("expected SSE object type, body: %s", body)
+	}
+}
+
+func TestSSEMux_NoDoneSentinelOnTransition(t *testing.T) {
+	logger := logmon.NewWriter(io.Discard)
+	w := httptest.NewRecorder()
+	mux := newSSEMux(w, logger, "test-model")
+
+	// Write some loading content
+	mux.WriteLoading("loading content")
+	// Transition
+	mux.StartUpstream()
+	// Write upstream content
+	mux.Write([]byte("[DONE]"))
+
+	body := w.Body.String()
+	// The only [DONE] should come from the upstream write, not from the transition
+	if !strings.Contains(body, "[DONE]") {
+		t.Errorf("expected upstream [DONE] in output, body: %s", body)
 	}
 }
 
