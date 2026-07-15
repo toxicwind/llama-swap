@@ -189,6 +189,25 @@ startPort: 10001
 # - see #366 for more details
 sendLoadingState: true
 
+# upstream: control behaviour of the /upstream/:model_id passthrough endpoint.
+# - optional, default: normalize_sse is false
+upstream:
+  # normalize_sse: normalize streaming responses to canonical OpenAI
+  # chat.completion.chunk format
+  # - optional, default: false
+  # - when false, SSE chunks pass through unmodified from the backend
+  # - when true, non-spec fields are stripped, missing envelope fields
+  #   are injected, and empty usage: {} objects are removed
+  # - can be overridden per-model with model.normalize_sse
+  normalize_sse: false
+
+  # ignorePaths: request paths that should not trigger a model swap
+  # - optional, default: [".*\\.(js|json|css|png|gif|jpg|jpeg|ico|txt)$"]
+  # - each entry is a regex matched against the remaining path after /upstream/<model>/
+  # - useful for static assets served by upstream servers
+  ignorePaths:
+    - ".*\\.(js|json|css|png|gif|jpg|jpeg|ico|txt)$"
+
 # includeAliasesInList: present aliases within the /v1/models OpenAI API listing
 # - optional, default: false
 # - when true, model aliases will be output to the API model listing duplicating
@@ -354,7 +373,8 @@ models:
       # - the `model` parameter can never be removed
       # - can be any JSON key in the request body
       # - recommended to stick to sampling parameters
-      stripParams: "temperature, top_p, top_k"
+	      stripParams: "temperature, top_p, top_k"
+	      # strip_params is also accepted as a legacy alias for stripParams
 
       # setParams: a dictionary of parameters to set/override in requests
       # - optional, default: empty dictionary
@@ -429,17 +449,23 @@ models:
 
     # sendLoadingState: overrides the global sendLoadingState setting for this model
     # - optional, default: undefined (use global setting)
-    sendLoadingState: false
+	    sendLoadingState: false
 
-    # timeouts: configure proxy connection timeouts for this model
-    # - optional, defaults shown below
-    # - useful for models running on slower hardware that need longer timeouts
-    # - connect: TCP dial connection timeout in seconds, default: 30 seconds
-    # - keepalive: TCP connection keepalive timeout, default: 30 seconds
-    # - responseHeader: time to wait for response headers in seconds, default: 0 (no timeout)
-    # - tlsHandshake: TLS handshake timeout in seconds, default: 10 seconds
-    # - idleConn: idle connection timeout in seconds, default: 90 seconds
-    # - set any value to 0 to disable that timeout (not recommended)
+	    # normalize_sse: overrides the global upstream.normalize_sse setting for this model
+	    # - optional, default: undefined (use global upstream.normalize_sse)
+	    # - when true, normalizes SSE streaming chunks to canonical OpenAI
+	    #   chat.completion.chunk format for this specific model
+	    normalize_sse: true
+
+	    # timeouts: configure proxy connection timeouts for this model
+	    # - optional, defaults shown below
+	    # - useful for models running on slower hardware that need longer timeouts
+	    # - connect: TCP dial connection timeout in seconds, default: 30 seconds
+	    # - keepalive: TCP connection keepalive timeout, default: 30 seconds
+	    # - responseHeader: time to wait for response headers in seconds, default: 0 (no timeout)
+	    # - tlsHandshake: TLS handshake timeout in seconds, default: 10 seconds
+	    # - idleConn: idle connection timeout in seconds, default: 0 (uses Go net/http default)
+	    # - set any value to 0 to disable that timeout (not recommended)
     timeouts:
       connect: 30
       keepalive: 0

@@ -63,7 +63,9 @@ Built in Go for performance and simplicity, llama-swap has zero dependencies and
   - Automatic unloading of models after timeout by setting a `ttl`
   - Docker and Podman support using `cmd` and `cmdStop` together
   - Preload models on startup with `hooks` ([#235](https://github.com/mostlygeek/llama-swap/pull/235))
-  - Apply filters to requests to control inference with `stripParams`, `setParams` and `setParamsByID`
+	  - Apply filters to requests to control inference with `stripParams`, `setParams` and `setParamsByID`
+	- ✅ SSE normalization — canonicalize streaming responses to OpenAI `chat.completion.chunk` format
+	  - Configure per-model with `normalize_sse` or globally with `upstream.normalize_sse`
 
 ### Web UI
 
