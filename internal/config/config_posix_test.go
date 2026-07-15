@@ -77,7 +77,7 @@ models:
 	if assert.NotNil(t, model1, "model1 should not be nil") {
 		assert.Equal(t, "path/to/cmd --port 5800", model1.Cmd) // has the port replaced
 		assert.Equal(t, "", model1.CmdStop)
-		assert.Equal(t, "http://localhost:5800", model1.Proxy)
+		assert.Equal(t, "http://127.0.0.1:5800", model1.Proxy)
 		assert.Equal(t, "/health", model1.CheckEndpoint)
 		assert.Equal(t, []string{}, model1.Aliases)
 		assert.Equal(t, []string{}, model1.Env)
@@ -167,6 +167,7 @@ groups:
 	}
 
 	modelLoadingState := false
+	normalizeSSE := false
 
 	defaultTimeout := TimeoutsConfig{
 		Connect:        30,
@@ -174,7 +175,6 @@ groups:
 		ResponseHeader: 0,
 		TLSHandshake:   10,
 		ExpectContinue: 1,
-		IdleConn:       90,
 	}
 
 	expectedGroups := map[string]GroupConfig{
@@ -221,6 +221,7 @@ groups:
 				Name:               "Model 1",
 				Description:        "This is model 1",
 				SendLoadingState:   &modelLoadingState,
+				NormalizeSSE:       &normalizeSSE,
 				Timeouts:           defaultTimeout,
 				HealthCheckTimeout: 15,
 				UnloadTimeout:      DEFAULT_UNLOAD_TIMEOUT,
@@ -232,6 +233,7 @@ groups:
 				Env:                []string{},
 				CheckEndpoint:      "/",
 				SendLoadingState:   &modelLoadingState,
+				NormalizeSSE:       &normalizeSSE,
 				Timeouts:           defaultTimeout,
 				HealthCheckTimeout: 15,
 				UnloadTimeout:      DEFAULT_UNLOAD_TIMEOUT,
@@ -243,6 +245,7 @@ groups:
 				Env:                []string{},
 				CheckEndpoint:      "/",
 				SendLoadingState:   &modelLoadingState,
+				NormalizeSSE:       &normalizeSSE,
 				Timeouts:           defaultTimeout,
 				HealthCheckTimeout: 15,
 				UnloadTimeout:      DEFAULT_UNLOAD_TIMEOUT,
@@ -254,6 +257,7 @@ groups:
 				Aliases:            []string{},
 				Env:                []string{},
 				SendLoadingState:   &modelLoadingState,
+				NormalizeSSE:       &normalizeSSE,
 				Timeouts:           defaultTimeout,
 				HealthCheckTimeout: 15,
 				UnloadTimeout:      DEFAULT_UNLOAD_TIMEOUT,

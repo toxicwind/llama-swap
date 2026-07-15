@@ -215,7 +215,7 @@ models:
 
 		assert.Equal(t, 5800, config.StartPort)
 		assert.Equal(t, "svr --port 5800", config.Models["model1"].Cmd)
-		assert.Equal(t, "http://localhost:5800", config.Models["model1"].Proxy)
+		assert.Equal(t, "http://127.0.0.1:5800", config.Models["model1"].Proxy)
 
 		assert.Equal(t, "svr --port 5801", config.Models["model2"].Cmd)
 		assert.Equal(t, "http://172.11.22.33:5801", config.Models["model2"].Proxy)
@@ -1612,7 +1612,7 @@ models:
 	assert.Equal(t, 0, modelConfig.Timeouts.ResponseHeader)
 	assert.Equal(t, 10, modelConfig.Timeouts.TLSHandshake)
 	assert.Equal(t, 1, modelConfig.Timeouts.ExpectContinue)
-	assert.Equal(t, 90, modelConfig.Timeouts.IdleConn)
+	assert.Equal(t, 0, modelConfig.Timeouts.IdleConn)
 }
 
 func TestConfig_TimeoutsZeroAllowed(t *testing.T) {
