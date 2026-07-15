@@ -35,6 +35,11 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		MetricsMaxInMemory: 1000,
 		CaptureBuffer:      5,
 		GlobalTTL:          0,
+		UnloadTimeout:      DEFAULT_UNLOAD_TIMEOUT,
+		UI: UIConfig{Activity: UIActivityConfig{SessionID: []string{
+			"X-Session-ID",
+			"X-Litellm-Session-Id",
+		}}},
 	}
 	if err = yaml.Unmarshal([]byte(yamlStr), &config); err != nil {
 		return Config{}, err
@@ -59,6 +64,15 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 	if config.GlobalTTL < 0 {
 		return Config{}, fmt.Errorf("globalTTL must be >= 0")
 	}
+
+	if config.UnloadTimeout < 0 {
+		return Config{}, fmt.Errorf("unloadTimeout must be >= 0")
+	}
+	if config.UnloadTimeout == 0 {
+		config.UnloadTimeout = DEFAULT_UNLOAD_TIMEOUT
+	}
+
+	config.UI.Activity.SessionID = normalizeHeaderNames(config.UI.Activity.SessionID)
 
 	if config.Store != nil {
 		if err := validateStorePath(config.Store.Path); err != nil {
@@ -119,6 +133,14 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 
 		if modelConfig.UnloadAfter < 0 {
 			return Config{}, fmt.Errorf("model %s: invalid TTL value %d", modelId, modelConfig.UnloadAfter)
+		}
+
+		// set model unloadTimeout to the global value when left at the default
+		if modelConfig.UnloadTimeout < 0 {
+			return Config{}, fmt.Errorf("model %s: invalid unloadTimeout value %d", modelId, modelConfig.UnloadTimeout)
+		}
+		if modelConfig.UnloadTimeout == 0 {
+			modelConfig.UnloadTimeout = config.UnloadTimeout
 		}
 
 		// Validate model macros
@@ -441,4 +463,22 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 	}
 
 	return config, nil
+}
+
+func normalizeHeaderNames(names []string) []string {
+	normalized := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, name)
+	}
+	return normalized
 }

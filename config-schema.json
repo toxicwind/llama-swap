@@ -169,6 +169,12 @@
             "default": 0,
             "description": "Default TTL for all models in seconds, 0 means no TTL and models will never be automatically unloaded"
         },
+        "unloadTimeout": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 10,
+            "description": "Graceful timeout in seconds when unloading a model (manual, API, or TTL expiry) before force-killing the model process. 0 uses the default of 10 seconds."
+        },
         "logLevel": {
             "type": "string",
             "enum": [
@@ -228,6 +234,32 @@
             ],
             "additionalProperties": false,
             "description": "Store configuration for durable llama-swap state."
+        },
+        "ui": {
+            "type": "object",
+            "properties": {
+                "activity": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "default": [
+                                "X-Session-ID",
+                                "X-Litellm-Session-Id"
+                            ],
+                            "description": "Ordered request headers used to identify sessions in the Activity page."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "default": {}
+                }
+            },
+            "additionalProperties": false,
+            "default": {},
+            "description": "Embedded UI configuration."
         },
         "performance": {
             "type": "object",
@@ -335,6 +367,12 @@
                         "minimum": -1,
                         "default": -1,
                         "description": "Automatically unload the model after ttl seconds. -1 uses the global TTL value, 0 disables unloading. Must be >0 to enable."
+                    },
+                    "unloadTimeout": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0,
+                        "description": "Graceful timeout in seconds when unloading this model (manual, API, or TTL expiry) before force-killing it. 0 uses the global unloadTimeout."
                     },
                     "useModelName": {
                         "type": "string",
