@@ -35,6 +35,11 @@ type loadingWriter struct {
 	modelName  string
 	startTime  time.Time
 
+	// chatID is a unique chatcmpl-xxx identifier shared across all loading chunks
+	// so Zed's strict stream parser can correlate them as one response.
+	chatID  string
+	created int64
+
 	pendingMu     sync.Mutex
 	pendingUpdate string
 
@@ -57,13 +62,16 @@ type loadingWriter struct {
 }
 
 func newLoadingWriter(logger *logmon.Monitor, modelName string, w http.ResponseWriter, req *http.Request) *loadingWriter {
+	now := time.Now()
 	s := &loadingWriter{
 		writer:        w,
 		req:           req,
 		ctx:           req.Context(),
 		logger:        logger,
 		modelName:     modelName,
-		startTime:     time.Now(),
+		chatID:        fmt.Sprintf("chatcmpl-%d", now.UnixNano()),
+		created:       now.Unix(),
+		startTime:     now,
 		tickDuration:  750 * time.Millisecond,
 		charPerSecond: 75,
 		done:          make(chan struct{}),
@@ -73,9 +81,69 @@ func newLoadingWriter(logger *logmon.Monitor, modelName string, w http.ResponseW
 	s.Header().Set("Cache-Control", "no-cache")
 	s.Header().Set("Connection", "keep-alive")
 	s.WriteHeader(http.StatusOK)
+
+	// Emit an initial role-assistant chunk so Zed's deserializer sees a
+	// well-formed first chunk before any reasoning_content arrives.
+	// Without this, the first chunk has role="" which some strict clients
+	// (Zed's untagged ResponseStreamResult) can't match.
+	s.sendRoleChunk()
 	s.sendLine("━━━━━")
 	s.sendLine(fmt.Sprintf("llama-swap loading model: %s", modelName))
 	return s
+}
+
+// sendRoleChunk emits a chunk with delta.role="assistant" and no content.
+// This matches the OpenAI streaming spec where the first chunk announces the role.
+func (s *loadingWriter) sendRoleChunk() {
+	type delta struct {
+		Role    string `json:"role,omitempty"`
+		Content string `json:"content,omitempty"`
+	}
+	type choice struct {
+		Index        int     `json:"index"`
+		Delta        delta   `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	}
+	type envelope struct {
+		ID      string   `json:"id"`
+		Object  string   `json:"object"`
+		Created int64    `json:"created"`
+		Model   string   `json:"model"`
+		Choices []choice `json:"choices"`
+	}
+
+	msg := envelope{
+		ID:      s.chatID,
+		Object:  "chat.completion.chunk",
+		Created: s.created,
+		Model:   s.modelName,
+		Choices: []choice{
+			{
+				Index:        0,
+				Delta:        delta{Role: "assistant"},
+				FinishReason: nil,
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+		s.logger.Errorf("<%s> Failed to marshal role SSE message: %v", s.modelName, err)
+		return
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.released {
+		return
+	}
+	if _, err = fmt.Fprintf(s.writer, "data: %s\n\n", jsonData); err != nil {
+		s.logger.Debugf("<%s> Failed to write role SSE data: %v", s.modelName, err)
+		return
+	}
+	if flusher, ok := s.writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func (s *loadingWriter) setUpdate(msg string) {
@@ -98,6 +166,10 @@ func (s *loadingWriter) start(ctx context.Context) {
 		s.sendLine(fmt.Sprintf("Done! (%.2fs)", duration.Seconds()))
 		s.sendLine("━━━━━")
 		s.sendLine(" ")
+		// NOTE: deliberately NOT sending [DONE] here because the real
+		// upstream response follows on the same SSE stream. A [DONE]
+		// sentinel would terminate the stream prematurely, leaving the
+		// client (Zed) waiting for chunks that never arrive.
 	}()
 
 	remarks := make([]string, len(loadingRemarks))
@@ -197,25 +269,47 @@ func (s *loadingWriter) sendLine(line string) {
 	s.sendData("\n")
 }
 
-func (s *loadingWriter) sendData(data string) {
-	type Delta struct {
-		ReasoningContent string `json:"reasoning_content"`
-	}
-	type Choice struct {
-		Index int   `json:"index"`
-		Delta Delta `json:"delta"`
-	}
-	type SSEMessage struct {
-		Choices []Choice `json:"choices"`
-	}
+// OpenAI streaming chunk envelope types — matches the spec exactly so Zed's
+// strict Rust serde deserializer (ResponseStreamResult untagged enum) can
+// parse every chunk. All fields required by spec are present:
+//   - id, object, created, model (top-level)
+//   - choices[].index, choices[].delta, choices[].finish_reason
+//
+// Without these, Zed's parser returns "data did not match any variant of
+// untagged enum ResponseStreamResult".
+type sseDelta struct {
+	Role             string `json:"role,omitempty"`
+	Content          string `json:"content,omitempty"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+}
 
-	msg := SSEMessage{
-		Choices: []Choice{
+type sseChoice struct {
+	Index        int      `json:"index"`
+	Delta        sseDelta `json:"delta"`
+	FinishReason *string  `json:"finish_reason"`
+}
+
+type sseEnvelope struct {
+	ID      string      `json:"id"`
+	Object  string      `json:"object"`
+	Created int64       `json:"created"`
+	Model   string      `json:"model"`
+	Choices []sseChoice `json:"choices"`
+}
+
+func (s *loadingWriter) sendData(data string) {
+	msg := sseEnvelope{
+		ID:      s.chatID,
+		Object:  "chat.completion.chunk",
+		Created: s.created,
+		Model:   s.modelName,
+		Choices: []sseChoice{
 			{
 				Index: 0,
-				Delta: Delta{
+				Delta: sseDelta{
 					ReasoningContent: data,
 				},
+				FinishReason: nil,
 			},
 		},
 	}
