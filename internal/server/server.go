@@ -15,6 +15,7 @@ import (
 	"github.com/mostlygeek/llama-swap/internal/event"
 	"github.com/mostlygeek/llama-swap/internal/logmon"
 	"github.com/mostlygeek/llama-swap/internal/perf"
+	"github.com/mostlygeek/llama-swap/internal/process"
 	"github.com/mostlygeek/llama-swap/internal/router"
 	"github.com/mostlygeek/llama-swap/internal/shared"
 	"github.com/mostlygeek/llama-swap/internal/store"
@@ -204,7 +205,40 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 	}
 	s.routes()
 	s.startPreload()
+	// Continuously reconcile model load/unload state and broadcast transitions
+	// on /models/sse so subscribers (e.g. Zed's llama.cpp provider) see models
+	// appear/disappear as they are loaded on demand or unloaded — not just at
+	// subscribe time. statusEvent dedupes against lastStatus, so only real
+	// transitions are emitted.
+	go s.watchModelState(3 * time.Second)
 	return s, nil
+}
+
+// watchModelState polls the local router's running models and broadcasts a
+// loaded/unloaded transition whenever a model's state changes. It stops when
+// the server shuts down.
+func (s *Server) watchModelState(interval time.Duration) {
+	if s.local == nil {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.shutdownCtx.Done():
+			return
+		case <-ticker.C:
+			running := s.local.RunningModels()
+			for id, st := range running {
+				switch st {
+				case process.StateReady, process.StateStarting:
+					s.modelEvents.statusEvent(id, "loaded", nil)
+				default:
+					s.modelEvents.statusEvent(id, "unloaded", nil)
+				}
+			}
+		}
+	}
 }
 
 // localPeerHandler dispatches a model-routed request to the local or peer
