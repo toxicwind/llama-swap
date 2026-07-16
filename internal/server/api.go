@@ -232,9 +232,14 @@ type runningModel struct {
 }
 
 // handleUnload stops every running local process. Peer models are remote and
-// unaffected.
+// unaffected. It also broadcasts unloaded events on /models/sse so Zed's
+// llama.cpp provider re-runs discovery.
 func (s *Server) handleUnload(w http.ResponseWriter, r *http.Request) {
+	running := s.local.RunningModels()
 	s.local.Unload(0)
+	for id := range running {
+		s.modelEvents.statusEvent(id, "unloaded", nil)
+	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }

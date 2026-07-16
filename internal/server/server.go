@@ -42,6 +42,12 @@ type Server struct {
 	local router.LocalRouter
 	peer  router.Router
 
+	// modelEvents broadcasts the /models/sse feed Zed's llama.cpp
+	// provider subscribes to. The proxy owns model lifecycle truth,
+	// so it synthesizes loaded/unloaded/loading events even when a
+	// backend does not speak /models/sse itself.
+	modelEvents *modelEventBroadcaster
+
 	mux     *http.ServeMux
 	handler http.Handler
 
@@ -192,6 +198,7 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 		build:       build,
 		local:       local,
 		peer:        peer,
+		modelEvents: newModelEventBroadcaster(muxlog),
 		shutdownCtx: shutdownCtx,
 		shutdownFn:  shutdownFn,
 	}
@@ -263,6 +270,8 @@ func (s *Server) routes() {
 
 	// llama-swap API + custom endpoints.
 	mux.Handle("GET /v1/models", apiChain.ThenFunc(s.handleListModels))
+	// llama.cpp-compatible model event feed (Zed /models/sse consumer).
+	mux.Handle("GET /models/sse", apiChain.ThenFunc(s.handleModelEvents))
 	mux.Handle("GET /logs", apiChain.ThenFunc(s.handleLogs))
 	mux.Handle("GET /logs/stream", apiChain.ThenFunc(s.handleLogStream))
 	mux.Handle("GET /logs/stream/{logMonitorID...}", apiChain.ThenFunc(s.handleLogStream))
