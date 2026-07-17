@@ -229,7 +229,9 @@ func (s *Server) watchModelState(interval time.Duration) {
 			return
 		case <-ticker.C:
 			running := s.local.RunningModels()
+			seen := make(map[string]struct{}, len(running))
 			for id, st := range running {
+				seen[id] = struct{}{}
 				switch st {
 				case process.StateReady, process.StateStarting:
 					s.modelEvents.statusEvent(id, "loaded", nil)
@@ -237,6 +239,9 @@ func (s *Server) watchModelState(interval time.Duration) {
 					s.modelEvents.statusEvent(id, "unloaded", nil)
 				}
 			}
+			// Emit unloaded for any model previously marked loaded but no
+			// longer in the running set (on-demand unload removes it entirely).
+			s.modelEvents.reconcileMissing(seen)
 		}
 	}
 }
