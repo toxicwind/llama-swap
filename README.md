@@ -5,6 +5,10 @@
 
 # llama-swap
 
+> **Fork:** [toxicwind/llama-swap](https://github.com/toxicwind/llama-swap) — based on [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap).  
+> Upstream docs remain below. **Fork-only changes are documented first** so they are obvious.
+
+
 Run multiple generative AI models on your machine and hot-swap between them on demand. llama-swap works with any OpenAI and Anthropic API compatible server and is used by thousands of people to power their local AI workflows.
 
 Built in Go for performance and simplicity, llama-swap has zero dependencies and is incredibly easy to set up. Get started in minutes - just one binary and one configuration file.
@@ -54,6 +58,7 @@ Built in Go for performance and simplicity, llama-swap has zero dependencies and
     - `GET /logs/stream/proxy` streams proxy logs only.
     - `GET /logs/stream/upstream` streams upstream process logs only.
     - `GET /logs/stream/{model_id}` streams logs for one model (including IDs with slashes, like `author/model`).
+  - `GET /models/sse` - model load/unload events (**fork**: Zed llama.cpp contract)
   - `/health` - just returns "OK"
   - `/metrics` - system and GPU metrics for prometheus
 - ✅ API Key support - define keys to restrict access to API endpoints
@@ -66,6 +71,46 @@ Built in Go for performance and simplicity, llama-swap has zero dependencies and
 	  - Apply filters to requests to control inference with `stripParams`, `setParams` and `setParamsByID`
 	- ✅ SSE normalization — canonicalize streaming responses to OpenAI `chat.completion.chunk` format
 	  - Configure per-model with `normalize_sse` or globally with `upstream.normalize_sse`
+
+
+## Fork additions ([toxicwind/llama-swap](https://github.com/toxicwind/llama-swap))
+
+These changes are **not** in upstream mostlygeek. They exist so llama-swap is a reliable local front door for **Zed**, **OpenFang**, and the **sovereign** stack (`:25100`).
+
+| Addition | Why | Where |
+|----------|-----|--------|
+| **`GET /models/sse`** | Zed’s llama.cpp provider listens for model load/unload events. Real backends often lack this feed; we **synthesize** it from the proxy lifecycle so Zed re-discovers models when swap loads/unloads. | `internal/server/models_sse.go` |
+| **SSE normalization (`normalize_sse`)** | Some servers emit non-OpenAI chunk shapes; clients (Zed, VS Code oaicopilot, agents) break. Optional global/per-model rewrite to OpenAI `chat.completion.chunk`. | config `upstream.normalize_sse` / `models.*.normalize_sse` |
+| **Complete loading-state SSE envelope** | Loading placeholders must look like real OpenAI stream chunks (incl. choice `index`) so clients don’t drop the stream. | router / loading writer |
+| **IPv4 loopback default (`127.0.0.1`)** | `localhost` → `::1` first on this host; backends bind IPv4 only → `connection refused`. Defaults use `127.0.0.1`. | `internal/config/model_config.go` |
+| **Free stale backend port before spawn** | Orphan `llama-server` holds `:2500x` → next load fails for every model. `fuser -k` on the target port before exec. | `internal/process/process_command.go` |
+| **Config: Filters consolidation** | Dropped broken `ModelFilters` wrapper; legacy `strip_params` YAML still works; `SanitizedCommand` / macro resolution fixed. | `internal/config/*` |
+| **Model-event watch fixes** | Unload/load SSE and in-memory state stay consistent when models go missing mid-flight. | `watchModelState`, models SSE tests |
+
+### Sovereign deployment (this machine)
+
+| Item | Value |
+|------|--------|
+| Listen | **`http://127.0.0.1:25100`** (`LLAMA_SWAP_PORT`) |
+| Chat UI | `http://127.0.0.1:25100/ui/` |
+| OpenAI API | `http://127.0.0.1:25100/v1` |
+| Binary (symlink) | `/home/toxic/sovereign/tools/llama-swap/llama-swap` → `projects/llama-swap-main/llama-swap` |
+| Runtime config | `/home/toxic/sovereign/tools/llama-swap/config.yaml` (sm_86 / RTX 3090 matrix, macros for 4 forks) |
+| Model inventory | `tools/llama-swap/MODEL_INVENTORY.md` (local GGUF audit — not upstream) |
+| Orchestration | `mise run up` → process-compose module `llama-swap` |
+
+**No vLLM.** Backend slots are local `llama-server` builds (beellama / turboquant / ik_llama / ik_turboquant) on `25001–25099`, scheduled by this proxy.
+
+### Remotes
+
+```text
+origin  https://github.com/mostlygeek/llama-swap.git   # upstream
+fork    https://github.com/toxicwind/llama-swap.git    # our fork (push here)
+```
+
+Rebuild: `cd /home/toxic/projects/llama-swap-main && go build -o llama-swap .`
+
+---
 
 ### Web UI
 

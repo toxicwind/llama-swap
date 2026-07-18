@@ -137,9 +137,10 @@ func (b *modelEventBroadcaster) reloadEvent() {
 	b.broadcast(ModelEvent{Model: "*", Event: "models_reload"})
 }
 
-// removeEvent announces a model was removed from config.
+// removeEvent announces a model was removed from config. It broadcasts a
+// model_remove event but leaves the status in lastStatus so that the
+// next reconcileMissing tick will emit an unloaded transition.
 func (b *modelEventBroadcaster) removeEvent(modelID string) {
-	delete(b.lastStatus, modelID)
 	b.broadcast(ModelEvent{Model: modelID, Event: "model_remove"})
 }
 
@@ -154,6 +155,37 @@ func (b *modelEventBroadcaster) syncRunning(running map[string]process.ProcessSt
 		default:
 			b.statusEvent(id, "unloaded", nil)
 		}
+	}
+}
+
+// reconcileMissing emits unloaded for any model the broadcaster previously
+// marked loaded (in lastStatus) but that is absent from the current running
+// set. This catches on-demand unloads that remove the model from
+// RunningModels() entirely — a plain iteration over the running set would miss
+// the disappearance and Zed would never learn the model unloaded.
+func (b *modelEventBroadcaster) reconcileMissing(seen map[string]struct{}) {
+	// Collect events to broadcast while holding the lock, then release
+	// before broadcasting to avoid deadlock with broadcast()'s lock.
+	var toBroadcast []ModelEvent
+	b.mu.Lock()
+	for id, prev := range b.lastStatus {
+		if prev != "loaded" {
+			continue
+		}
+		if _, stillThere := seen[id]; stillThere {
+			continue
+		}
+		b.lastStatus[id] = "unloaded"
+		toBroadcast = append(toBroadcast, ModelEvent{
+			Model: id,
+			Event: "status_change",
+			Data:  &ModelEventData{Status: strPtr("unloaded")},
+		})
+	}
+	b.mu.Unlock()
+
+	for _, ev := range toBroadcast {
+		b.broadcast(ev)
 	}
 }
 
@@ -185,6 +217,12 @@ func (s *Server) handleModelEvents(w http.ResponseWriter, r *http.Request) {
 	if s.local != nil {
 		s.modelEvents.syncRunning(s.local.RunningModels())
 	}
+	// Always send an immediate SSE frame so subscribers (Zed / e2e) do not
+	// wait up to 30s when no models are running and the channel is quiet.
+	if _, err := w.Write([]byte(": keep-alive\n\n")); err != nil {
+		return
+	}
+	flusher.Flush()
 
 	ctx := r.Context()
 	shutdownDone := func() <-chan struct{} {
