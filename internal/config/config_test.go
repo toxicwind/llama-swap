@@ -1612,7 +1612,7 @@ models:
 	assert.Equal(t, 0, modelConfig.Timeouts.ResponseHeader)
 	assert.Equal(t, 10, modelConfig.Timeouts.TLSHandshake)
 	assert.Equal(t, 1, modelConfig.Timeouts.ExpectContinue)
-	assert.Equal(t, 0, modelConfig.Timeouts.IdleConn)
+	assert.Equal(t, 90, modelConfig.Timeouts.IdleConn)
 }
 
 func TestConfig_TimeoutsZeroAllowed(t *testing.T) {

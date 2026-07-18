@@ -41,7 +41,7 @@ models:
 	for modelId, modelConfig := range config.Models {
 		t.Run(fmt.Sprintf("Testing macros in filters for model %s", modelId), func(t *testing.T) {
 			assert.Equal(t, "model, top_k, top_k, temperature, temperature, top_p, , ,", modelConfig.Filters.StripParams)
-			sanitized := modelConfig.Filters.SanitizedStripParams()
+			sanitized, _ := modelConfig.Filters.SanitizedStripParams()
 			// model has been removed
 			// empty strings have been removed
 			// duplicates have been removed
@@ -157,7 +157,7 @@ models:
 	modelConfig := config.Models["model1"]
 
 	// Check stripParams
-	stripParams := modelConfig.Filters.SanitizedStripParams()
+	stripParams, _ := modelConfig.Filters.SanitizedStripParams()
 	assert.Equal(t, []string{"top_k"}, stripParams)
 
 	// Check setParams
