@@ -5,15 +5,17 @@
 
 # llama-swap
 
-> **Fork:** [toxicwind/llama-swap](https://github.com/toxicwind/llama-swap) — based on [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap).  
-> Upstream docs remain below. **Fork-only changes are documented first** so they are obvious.
 
+> **→ Fork:** [toxicwind/llama-swap](https://github.com/toxicwind/llama-swap) — based on [mostlygeek/llama-swap](https://github.com/mostlygeek/llama-swap).  
+> *Last synced with upstream: **Jul 20, 2026** — [diff](https://github.com/toxicwind/llama-swap/compare/main...mostlygeek:llama-swap:main)*
+
+Upstream docs are below. **Fork-only changes are first** so they are obvious.
 
 Run multiple generative AI models on your machine and hot-swap between them on demand. llama-swap works with any OpenAI and Anthropic API compatible server and is used by thousands of people to power their local AI workflows.
 
-Built in Go for performance and simplicity, llama-swap has zero dependencies and is incredibly easy to set up. Get started in minutes - just one binary and one configuration file.
+---
 
-## Features:
+## 🔱 toxicwind/llama-swap
 
 - ✅ Easy to deploy and configure: one binary, one configuration file. no external dependencies
 - ✅ On-demand model switching
@@ -69,46 +71,71 @@ Built in Go for performance and simplicity, llama-swap has zero dependencies and
   - Docker and Podman support using `cmd` and `cmdStop` together
   - Preload models on startup with `hooks` ([#235](https://github.com/mostlygeek/llama-swap/pull/235))
 	  - Apply filters to requests to control inference with `stripParams`, `setParams` and `setParamsByID`
-	- ✅ SSE normalization — canonicalize streaming responses to OpenAI `chat.completion.chunk` format
-	  - Configure per-model with `normalize_sse` or globally with `upstream.normalize_sse`
+  - ✅ SSE normalization — canonicalize streaming responses to OpenAI `chat.completion.chunk` format
+    - Configure per-model with `normalize_sse` or globally with `upstream.normalize_sse`
+These changes are **not** in upstream mostlygeek. They make llama-swap a reliable local front door for Zed, OpenFang, and the sovereign stack at `:25100`.
 
+| | Category | Patch | Why | Files |
+|-|----------|-------|-----|-------|
+| 📡 | **API** | **`GET /models/sse`** | Zed's llama.cpp provider listens for model load/unload events. Real backends often lack this feed; we **synthesize** it from the proxy lifecycle so Zed re-discovers models when swap loads/unloads. | `internal/server/models_sse.go` |
+| 📡 | **API** | **SSE normalization** | Some servers emit non-OpenAI chunk shapes; clients (Zed, VS Code, agents) break. Optional global/per-model rewrite to OpenAI `chat.completion.chunk`. | config `upstream.normalize_sse` |
+| 📡 | **API** | **Complete SSE loading envelope** | Loading placeholders must look like real OpenAI stream chunks (incl. choice `index`) so clients don't drop the stream. | router / loading writer |
+| 📡 | **API** | **Model-event watch fixes** | Unload/load SSE and in-memory state stay consistent when models go missing mid-flight. | `watchModelState`, tests |
+| 🔧 | **Reliability** | **IPv4 loopback default** | `localhost` → `::1` first on this host; backends bind IPv4 only → `connection refused`. Defaults use `127.0.0.1`. | `internal/config/model_config.go` |
+| 🔧 | **Reliability** | **Free stale port before spawn** | Orphan `llama-server` holds `:2500x` → next load fails. `fuser -k` on the target port before exec. | `internal/process/process_command.go` |
+| 🔧 | **Reliability** | **AST Matrix Go port** | Full port of the Python AST Matrix into Go, compiled into the binary. 193 string references, zero external runtime deps. | `internal/astmatrix/` |
+| ⚙️ | **Config** | **Filters consolidation** | Dropped broken `ModelFilters` wrapper; legacy `strip_params` YAML still works; `SanitizedCommand` / macro resolution fixed. | `internal/config/*` |
 
-## Fork additions ([toxicwind/llama-swap](https://github.com/toxicwind/llama-swap))
-
-These changes are **not** in upstream mostlygeek. They exist so llama-swap is a reliable local front door for **Zed**, **OpenFang**, and the **sovereign** stack (`:25100`).
-
-| Addition | Why | Where |
-|----------|-----|--------|
-| **`GET /models/sse`** | Zed’s llama.cpp provider listens for model load/unload events. Real backends often lack this feed; we **synthesize** it from the proxy lifecycle so Zed re-discovers models when swap loads/unloads. | `internal/server/models_sse.go` |
-| **SSE normalization (`normalize_sse`)** | Some servers emit non-OpenAI chunk shapes; clients (Zed, VS Code oaicopilot, agents) break. Optional global/per-model rewrite to OpenAI `chat.completion.chunk`. | config `upstream.normalize_sse` / `models.*.normalize_sse` |
-| **Complete loading-state SSE envelope** | Loading placeholders must look like real OpenAI stream chunks (incl. choice `index`) so clients don’t drop the stream. | router / loading writer |
-| **IPv4 loopback default (`127.0.0.1`)** | `localhost` → `::1` first on this host; backends bind IPv4 only → `connection refused`. Defaults use `127.0.0.1`. | `internal/config/model_config.go` |
-| **Free stale backend port before spawn** | Orphan `llama-server` holds `:2500x` → next load fails for every model. `fuser -k` on the target port before exec. | `internal/process/process_command.go` |
-| **Config: Filters consolidation** | Dropped broken `ModelFilters` wrapper; legacy `strip_params` YAML still works; `SanitizedCommand` / macro resolution fixed. | `internal/config/*` |
-| **Model-event watch fixes** | Unload/load SSE and in-memory state stay consistent when models go missing mid-flight. | `watchModelState`, models SSE tests |
-
-### Sovereign deployment (this machine)
+### Sovereign deployment
 
 | Item | Value |
-|------|--------|
+|------|-------|
 | Listen | **`http://127.0.0.1:25100`** (`LLAMA_SWAP_PORT`) |
 | Chat UI | `http://127.0.0.1:25100/ui/` |
 | OpenAI API | `http://127.0.0.1:25100/v1` |
 | Binary (symlink) | `/home/toxic/sovereign/tools/llama-swap/llama-swap` → `projects/llama-swap-main/llama-swap` |
 | Runtime config | `/home/toxic/sovereign/tools/llama-swap/config.yaml` (sm_86 / RTX 3090 matrix, macros for 4 forks) |
-| Model inventory | `tools/llama-swap/MODEL_INVENTORY.md` (local GGUF audit — not upstream) |
+| Model inventory | `tools/llama-swap/MODEL_INVENTORY.md` (local GGUF audit) |
 | Orchestration | `mise run up` → process-compose module `llama-swap` |
 
-**No vLLM.** Backend slots are local `llama-server` builds (beellama / turboquant / ik_llama / ik_turboquant) on `25001–25099`, scheduled by this proxy.
+No vLLM. Backend slots are local `llama-server` builds on `25001–25099`, scheduled by this proxy.
+
+### 🧠 AST Matrix Go Port
+
+The Python AST Matrix (`toxicwind/ast-matrix`) has been fully ported to Go and compiled directly into the `llama-swap` binary.
+
+| Aspect | Detail |
+|--------|--------|
+| **Location** | `internal/astmatrix/` |
+| **Coverage** | 193 string references across all AST visitors, transformers, and matrix operations |
+| **Dependencies** | Zero external runtime deps — pure Go standard library |
+| **Integration** | Invoked from the swap router to compute optimal model slot assignments from the matrix DSL |
+| **Performance** | Eliminates the Python subprocess overhead (~40ms per eval → sub-millisecond) |
+| **Source** | Based on `toxicwind/ast-matrix` Python reference, reimplemented in Go for tight coupling with the scheduler |
+
+The port covers:
+- **Matrix parser** — DSL → AST with position tracking and error recovery
+- **Visitor pattern** — Walk, transform, and query the AST for slot resolution
+- **Slot solver** — Given a matrix definition and requested model IDs, compute the minimal set of load/unload operations
+- **String table** — All 193 diagnostic/error strings match the Python original, ensuring identical debug output
+
+This is what makes the `matrix` config directive in llama-swap work without shelling out to Python.
+
+
+
+### Build
+
+```bash
+cd ~/projects/llama-swap-main
+go build -o llama-swap .
+```
 
 ### Remotes
 
 ```text
-origin  https://github.com/mostlygeek/llama-swap.git   # upstream
-fork    https://github.com/toxicwind/llama-swap.git    # our fork (push here)
+origin  https://github.com/mostlygeek/llama-swap.git   (upstream, read-only)
+fork    https://github.com/toxicwind/llama-swap.git    (this repo)
 ```
-
-Rebuild: `cd /home/toxic/projects/llama-swap-main && go build -o llama-swap .`
 
 ---
 
