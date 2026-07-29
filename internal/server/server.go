@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mostlygeek/llama-swap/internal/astmatrix"
 	"github.com/mostlygeek/llama-swap/internal/chain"
 	"github.com/mostlygeek/llama-swap/internal/config"
 	"github.com/mostlygeek/llama-swap/internal/event"
@@ -42,6 +43,7 @@ type Server struct {
 
 	local router.LocalRouter
 	peer  router.Router
+	cloud *astmatrix.Router // cloud model routing via AST Matrix
 
 	// modelEvents broadcasts the /models/sse feed Zed's llama.cpp
 	// provider subscribes to. The proxy owns model lifecycle truth,
@@ -182,6 +184,33 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 		return nil, fmt.Errorf("creating peer router: %w", err)
 	}
 
+	// Initialize cloud router (AST Matrix) if configured.
+	var cloud *astmatrix.Router
+	if cfg.AstMatrix != nil && cfg.AstMatrix.Enabled {
+		amCfg := &astmatrix.AstMatrixConfig{
+			Enabled:     cfg.AstMatrix.Enabled,
+			Strategy:    cfg.AstMatrix.Strategy,
+			MaxParallel: cfg.AstMatrix.MaxParallel,
+			DbPath:      cfg.AstMatrix.DbPath,
+			StickyTTL:   cfg.AstMatrix.StickyTTL,
+			FifoMax:     cfg.AstMatrix.FifoMax,
+		}
+		amCfg.Providers = make(map[string]astmatrix.ProviderCfg)
+		for name, pcfg := range cfg.AstMatrix.Providers {
+			amCfg.Providers[name] = astmatrix.ProviderCfg{
+				BaseURL:  pcfg.BaseURL,
+				KeyEnv:   pcfg.KeyEnv,
+				KeyEnvAlt: pcfg.KeyEnvAlt,
+				NoAuth:   pcfg.NoAuth,
+			}
+		}
+		cloud, err = astmatrix.NewRouter(amCfg)
+		if err != nil {
+			return nil, fmt.Errorf("creating astmatrix router: %w", err)
+		}
+		proxylog.Infof("astmatrix cloud router enabled: strategy=%s providers=%d", cfg.AstMatrix.Strategy, len(cloud.Matrix().Providers()))
+	}
+
 	if st == nil {
 		return nil, fmt.Errorf("store is required")
 	}
@@ -199,6 +228,7 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 		build:       build,
 		local:       local,
 		peer:        peer,
+		cloud:       cloud,
 		modelEvents: newModelEventBroadcaster(muxlog),
 		shutdownCtx: shutdownCtx,
 		shutdownFn:  shutdownFn,
@@ -264,6 +294,9 @@ func (s *Server) localPeerHandler(w http.ResponseWriter, r *http.Request) {
 	case s.peer.Handles(data.ModelID):
 		s.proxylog.Debugf("dispatch: using peer for model: %s", data.ModelID)
 		s.peer.ServeHTTP(w, r)
+	case s.cloud != nil && s.cloud.Handles(data.ModelID):
+		s.proxylog.Debugf("dispatch: using cloud matrix for model: %s", data.ModelID)
+		s.cloud.ServeHTTP(w, r)
 	default:
 		shared.SendError(w, r, router.ErrNoRouterFound)
 	}
@@ -398,6 +431,19 @@ func (s *Server) Shutdown(timeout time.Duration) error {
 				mu.Unlock()
 			}
 		}(rt)
+	}
+
+	// Close the cloud router's health database.
+	if s.cloud != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.cloud.Close(); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		}()
 	}
 
 	wg.Wait()

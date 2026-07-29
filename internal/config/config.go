@@ -24,36 +24,28 @@ type MacroEntry struct {
 
 type MacroList []MacroEntry
 
-// UnmarshalYAML implements custom YAML unmarshaling that preserves macro definition order
 func (ml *MacroList) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
 		return fmt.Errorf("macros must be a mapping")
 	}
-
-	// yaml.Node.Content for a mapping contains alternating key/value nodes
 	entries := make([]MacroEntry, 0, len(value.Content)/2)
 	for i := 0; i < len(value.Content); i += 2 {
 		keyNode := value.Content[i]
 		valueNode := value.Content[i+1]
-
 		var name string
 		if err := keyNode.Decode(&name); err != nil {
 			return fmt.Errorf("failed to decode macro name: %w", err)
 		}
-
 		var val any
 		if err := valueNode.Decode(&val); err != nil {
 			return fmt.Errorf("failed to decode macro value for '%s': %w", name, err)
 		}
-
 		entries = append(entries, MacroEntry{Name: name, Value: val})
 	}
-
 	*ml = entries
 	return nil
 }
 
-// Get retrieves a macro value by name
 func (ml MacroList) Get(name string) (any, bool) {
 	for _, entry := range ml {
 		if entry.Name == name {
@@ -63,7 +55,6 @@ func (ml MacroList) Get(name string) (any, bool) {
 	return nil, false
 }
 
-// ToMap converts MacroList to a map (for backward compatibility if needed)
 func (ml MacroList) ToMap() map[string]any {
 	result := make(map[string]any, len(ml))
 	for _, entry := range ml {
@@ -79,7 +70,6 @@ type GroupConfig struct {
 	Members    []string `yaml:"members"`
 }
 
-// set default values for GroupConfig
 func (c *GroupConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	type rawGroupConfig GroupConfig
 	defaults := rawGroupConfig{
@@ -88,11 +78,9 @@ func (c *GroupConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		Persistent: false,
 		Members:    []string{},
 	}
-
 	if err := unmarshal(&defaults); err != nil {
 		return err
 	}
-
 	*c = GroupConfig(defaults)
 	return nil
 }
@@ -117,19 +105,51 @@ type UIActivityConfig struct {
 	SessionID []string `yaml:"session_id" json:"session_id"`
 }
 
-// ProfileConfig describes a runtime-selectable set of model ID rewrites.
-// Empty pin targets disable the corresponding model ID while the profile is
-// active. YAML null values decode to the same empty string representation.
+// AstMatrixConfig configures the AST Matrix cloud router.
+type AstMatrixConfig struct {
+	Enabled     bool                     `yaml:"enabled"`
+	Strategy    string                   `yaml:"strategy"`
+	MaxParallel int                      `yaml:"maxParallel"`
+	DbPath      string                   `yaml:"dbPath"`
+	StickyTTL   int                      `yaml:"stickyTtl"`
+	FifoMax     int                      `yaml:"fifoMax"`
+	Providers   map[string]ProviderCfg   `yaml:"providers"`
+}
+
+// ProviderCfg is per-provider configuration in the AST Matrix.
+type ProviderCfg struct {
+	BaseURL  string `yaml:"baseUrl"`
+	KeyEnv   string `yaml:"keyEnv"`
+	KeyEnvAlt string `yaml:"keyEnvAlt"`
+	NoAuth   bool   `yaml:"noAuth"`
+}
+
+func (a *AstMatrixConfig) Defaults() {
+	if a.Strategy == "" {
+		a.Strategy = "hybrid"
+	}
+	if a.MaxParallel <= 0 {
+		a.MaxParallel = 4
+	}
+	if a.DbPath == "" {
+		a.DbPath = "/home/toxic/sovereign/data/ast_matrix.db"
+	}
+	if a.StickyTTL <= 0 {
+		a.StickyTTL = 1800
+	}
+	if a.FifoMax <= 0 {
+		a.FifoMax = 64
+	}
+}
+
 type ProfileConfig struct {
 	Description string            `yaml:"description" json:"description"`
 	Pins        map[string]string `yaml:"pins" json:"pins"`
 }
 
-// UnmarshalYAML rejects the removed list-shaped profile syntax with a useful
-// migration error while allowing null pin values to normalize to empty strings.
 func (c *ProfileConfig) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
-		return fmt.Errorf("profile must be a mapping with description and pins; the legacy list syntax is no longer supported")
+		return fmt.Errorf("profile must be a mapping with description and pins")
 	}
 	type rawProfileConfig ProfileConfig
 	var raw rawProfileConfig
@@ -153,55 +173,33 @@ type Config struct {
 	Performance        PerformanceConfig        `yaml:"performance"`
 	GlobalTTL          int                      `yaml:"globalTTL"`
 	UnloadTimeout      int                      `yaml:"unloadTimeout"`
-	Models             map[string]ModelConfig   `yaml:"models"` /* key is model ID */
+	Models             map[string]ModelConfig   `yaml:"models"`
 	Profiles           map[string]ProfileConfig `yaml:"profiles"`
-
-	// routing is the canonical source for swap/scheduling configuration.
-	// New code must read Routing, never the backwards-compat fields below.
-	Routing RoutingConfig `yaml:"routing"`
-
-	// Groups and Matrix are permanent backwards-compat input fields for the
-	// legacy top-level `groups:`/`matrix:` keys. They are normalized into
-	// Routing by LoadConfigFromReader. New code must not read them directly.
-	Groups map[string]GroupConfig `yaml:"groups"` /* key is group ID */
-	Matrix *MatrixConfig          `yaml:"matrix"`
-
-	// for key/value replacements in model's cmd, cmdStop, proxy, checkEndPoint
-	Macros MacroList `yaml:"macros"`
-
-	// map aliases to actual model IDs
-	aliases map[string]string
-
-	// automatic port assignments
-	StartPort int `yaml:"startPort"`
-
-	// hooks, see: #209
-	Hooks HooksConfig `yaml:"hooks"`
-
-	// send loading state in reasoning
-	SendLoadingState bool `yaml:"sendLoadingState"`
-
-	// present aliases to /v1/models OpenAI API listing
-	IncludeAliasesInList bool `yaml:"includeAliasesInList"`
-
-	// support API keys, see issue #433, #50, #251
-	RequiredAPIKeys []string `yaml:"apiKeys"`
-
-	// support remote peers, see issue #433, #296
-	Peers PeerDictionaryConfig `yaml:"peers"`
-
-	// upstream controls behaviour of the /upstream passthrough endpoint
-	Upstream UpstreamConfig `yaml:"upstream"`
+	Routing            RoutingConfig            `yaml:"routing"`
+	Groups             map[string]GroupConfig   `yaml:"groups"`
+	Matrix             *MatrixConfig            `yaml:"matrix"`
+	Macros             MacroList                `yaml:"macros"`
+	aliases            map[string]string
+	StartPort          int                      `yaml:"startPort"`
+	Hooks              HooksConfig              `yaml:"hooks"`
+	SendLoadingState   bool                     `yaml:"sendLoadingState"`
+	IncludeAliasesInList bool                   `yaml:"includeAliasesInList"`
+	RequiredAPIKeys    []string                 `yaml:"apiKeys"`
+	Peers              PeerDictionaryConfig     `yaml:"peers"`
+	Upstream           UpstreamConfig           `yaml:"upstream"`
+	// AstMatrix configures the AST Matrix cloud router.
+	// When enabled, cloud model requests are routed through the matrix
+	// to remote providers (openrouter, nvidia, groq, google, etc.).
+	AstMatrix *AstMatrixConfig `yaml:"astMatrix"`
 }
 
-// RoutingConfig is the canonical, normalized routing/scheduling configuration.
 type RoutingConfig struct {
 	Scheduler SchedulerConfig `yaml:"scheduler"`
 	Router    RouterConfig    `yaml:"router"`
 }
 
 type SchedulerConfig struct {
-	Use      string            `yaml:"use"` // default "fifo"
+	Use      string            `yaml:"use"`
 	Settings SchedulerSettings `yaml:"settings"`
 }
 
@@ -210,11 +208,11 @@ type SchedulerSettings struct {
 }
 
 type FifoConfig struct {
-	Priority map[string]int `yaml:"priority"` // model ID -> priority, default 0
+	Priority map[string]int `yaml:"priority"`
 }
 
 type RouterConfig struct {
-	Use      string         `yaml:"use"` // "group" (default) | "matrix"
+	Use      string         `yaml:"use"`
 	Settings RouterSettings `yaml:"settings"`
 }
 
@@ -241,8 +239,6 @@ func (c *Config) FindConfig(modelName string) (ModelConfig, string, bool) {
 	}
 }
 
-// ResolveBaseModel resolves a name without applying profiles. Local model IDs
-// and aliases take precedence over peer model IDs, matching server dispatch.
 func (c *Config) ResolveBaseModel(search string) (string, bool) {
 	if realName, found := c.RealModelName(search); found {
 		return realName, true
@@ -266,30 +262,23 @@ func LoadConfig(path string) (Config, error) {
 	return LoadConfigFromReader(file)
 }
 
-// rewrites the yaml to include a default group with any orphaned models
 func AddDefaultGroupToConfig(config Config) Config {
-
 	if config.Groups == nil {
 		config.Groups = make(map[string]GroupConfig)
 	}
-
 	defaultGroup := GroupConfig{
 		Swap:      true,
 		Exclusive: true,
 		Members:   []string{},
 	}
-	// if groups is empty, create a default group and put
-	// all models into it
 	if len(config.Groups) == 0 {
 		for modelName := range config.Models {
 			defaultGroup.Members = append(defaultGroup.Members, modelName)
 		}
 	} else {
-		// iterate over existing group members and add non-grouped models into the default group
 		for modelName := range config.Models {
 			foundModel := false
 		found:
-			// search for the model in existing groups
 			for _, groupConfig := range config.Groups {
 				for _, member := range groupConfig.Members {
 					if member == modelName {
@@ -298,15 +287,12 @@ func AddDefaultGroupToConfig(config Config) Config {
 					}
 				}
 			}
-
 			if !foundModel {
 				defaultGroup.Members = append(defaultGroup.Members, modelName)
 			}
 		}
 	}
-
-	sort.Strings(defaultGroup.Members) // make consistent ordering for testing
+	sort.Strings(defaultGroup.Members)
 	config.Groups[DEFAULT_GROUP_ID] = defaultGroup
-
 	return config
 }

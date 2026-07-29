@@ -184,6 +184,11 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 			modelConfig.Name = strings.ReplaceAll(modelConfig.Name, macroSlug, macroStr)
 			modelConfig.Description = strings.ReplaceAll(modelConfig.Description, macroSlug, macroStr)
 
+			// Substitute macros in Env (string slice)
+			for j, envEntry := range modelConfig.Env {
+				modelConfig.Env[j] = strings.ReplaceAll(envEntry, macroSlug, macroStr)
+			}
+
 			// Substitute macros in SetParamsByID keys and values
 			if len(modelConfig.Filters.SetParamsByID) > 0 {
 				newSetParamsByID := make(map[string]map[string]any, len(modelConfig.Filters.SetParamsByID))
@@ -234,6 +239,10 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 			modelConfig.Proxy = strings.ReplaceAll(modelConfig.Proxy, macroSlug, macroStr)
 			modelConfig.Name = strings.ReplaceAll(modelConfig.Name, macroSlug, macroStr)
 			modelConfig.Description = strings.ReplaceAll(modelConfig.Description, macroSlug, macroStr)
+
+			for j, envEntry := range modelConfig.Env {
+				modelConfig.Env[j] = strings.ReplaceAll(envEntry, macroSlug, macroStr)
+			}
 
 			if len(modelConfig.Metadata) > 0 {
 				result, err := substituteMacroInValue(modelConfig.Metadata, "PORT", nextPort)
