@@ -43,7 +43,7 @@ func NewRateLimiter() *PerProviderRateLimiter {
 		backoffDuration:   make(map[string]time.Duration),
 		rateLimitCount:    make(map[string]int),
 		windowDuration:    60 * time.Second,
-		maxRequests:       60, // NIM free tier ~60 req/min
+		maxRequests:       200, // Higher limit for non-NVIDIA providers
 		minBackoff:        5 * time.Second,
 		maxBackoff:        120 * time.Second,
 		backoffFactor:     2.0,
