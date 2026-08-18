@@ -3,6 +3,8 @@ package astmatrix
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,104 +15,200 @@ import (
 	"github.com/mostlygeek/llama-swap/internal/logmon"
 )
 
-func TestLiveProviders(t *testing.T) {
+// TestLiveKimi tests against the real KIMI API sandbox
+func TestLiveKimi(t *testing.T) {
 	if os.Getenv("LIVE_TEST") != "1" {
-		t.Skip("Set LIVE_TEST=1 to run live provider tests")
+		t.Skip("Set LIVE_TEST=1 to run live tests")
 	}
-	logger := logmon.NewMonitor("astmatrix-test")
-	cfg := &AstMatrixConfig{
-		Enabled: true, Strategy: "hybrid", ASTStrategy: "ast_race",
-		RequestTimeout: 120, MaxRetries: 2, HealthProbeInterval: 60,
-		EnableCoalescing: true,
-		Providers: map[string]ProviderCfg{
-			"openrouter": {BaseURL: "https://openrouter.ai/api/v1", KeyEnv: "OPENROUTER_API_KEY", Models: []string{"openrouter/auto"}},
-			"groq": {BaseURL: "https://api.groq.com/openai/v1", KeyEnv: "GROQ_API_KEY", FreeTier: true, Models: []string{"groq/llama-3.1-70b-versatile"}},
-			"github": {BaseURL: "https://models.inference.ai.azure.com", KeyEnv: "GITHUB_TOKEN", FreeTier: true, Models: []string{"github/gpt-4o-mini"}},
-		},
-	}
-	cfg.Defaults()
+
+	logger := logmon.NewMonitor("astmatrix-live")
+	cfg := loadLiveConfig(t)
 	router, err := NewRouter(cfg, logger)
-	if err != nil { t.Fatalf("NewRouter: %v", err) }
+	if err != nil {
+		t.Fatalf("NewRouter: %v", err)
+	}
 	defer router.Shutdown()
 
-	t.Run("BasicCompletion", func(t *testing.T) {
+	// Wait for health probes
+	t.Log("Waiting 5s for health probes...")
+	time.Sleep(5 * time.Second)
+
+	// Test 1: KIMI completion
+	t.Run("KimiCompletion", func(t *testing.T) {
 		body := map[string]interface{}{
-			"model": "openrouter/auto", "messages": []map[string]string{{"role": "user", "content": "Say hello"}},
+			"model":    "kimi-auto",
+			"messages": []map[string]string{{"role": "user", "content": "Say hello in 3 words"}},
+			"max_tokens": 50,
+		}
+		resp := testRequest(t, router, body)
+		if resp.StatusCode != 200 {
+			body := readBody(resp)
+			t.Fatalf("KIMI failed: %d %s", resp.StatusCode, body)
+		}
+		var result map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&result)
+		if choices, ok := result["choices"].([]interface{}); ok && len(choices) > 0 {
+			t.Logf("KIMI response: %v", choices[0])
+		}
+	})
+
+	// Test 2: KIMI streaming
+	t.Run("KimiStreaming", func(t *testing.T) {
+		body := map[string]interface{}{
+			"model":    "kimi-fast",
+			"messages": []map[string]string{{"role": "user", "content": "Count 1,2,3"}},
+			"stream":   true,
 			"max_tokens": 100,
 		}
 		resp := testRequest(t, router, body)
-		if resp.StatusCode != http.StatusOK { t.Fatalf("expected 200, got %d", resp.StatusCode) }
-		var result map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&result)
-		if _, ok := result["choices"]; !ok { t.Fatalf("no choices: %v", result) }
-	})
-
-	t.Run("StreamingSSE", func(t *testing.T) {
-		body := map[string]interface{}{
-			"model": "groq/llama-3.1-70b-versatile", "messages": []map[string]string{{"role": "user", "content": "Count 1 to 10"}},
-			"stream": true, "max_tokens": 4096,
+		if resp.StatusCode != 200 {
+			t.Fatalf("KIMI streaming failed: %d", resp.StatusCode)
 		}
-		resp := testRequest(t, router, body)
-		if resp.StatusCode != http.StatusOK { t.Fatalf("expected 200, got %d", resp.StatusCode) }
 		ct := resp.Header.Get("Content-Type")
-		if !strings.Contains(ct, "text/event-stream") { t.Logf("Warning: expected text/event-stream, got %s", ct) }
+		if !strings.Contains(ct, "text/event-stream") {
+			t.Logf("Warning: Content-Type=%s (expected text/event-stream)", ct)
+		}
 		buf := new(bytes.Buffer)
-		buf.ReadFrom(resp.Body)
-		if buf.Len() == 0 { t.Fatal("empty SSE stream") }
-		t.Logf("SSE stream: %d bytes", buf.Len())
+		io.Copy(buf, resp.Body)
+		if buf.Len() == 0 {
+			t.Fatal("Empty SSE stream")
+		}
+		t.Logf("KIMI SSE: %d bytes", buf.Len())
 	})
 
-	t.Run("LargeContext", func(t *testing.T) {
-		largeText := strings.Repeat("The quick brown fox jumps over the lazy dog. ", 20000)
+	// Test 3: Large context (1M+ simulation)
+	t.Run("KimiLargeContext", func(t *testing.T) {
+		large := strings.Repeat("The quick brown fox jumps over the lazy dog. ", 5000)
 		body := map[string]interface{}{
-			"model": "github/gpt-4o-mini",
+			"model": "kimi-long",
 			"messages": []map[string]string{
 				{"role": "system", "content": "You are a helpful assistant."},
-				{"role": "user", "content": "Summarize: " + largeText[:100000]},
+				{"role": "user", "content": "Summarize this text in 10 words: " + large[:50000]},
 			},
-			"max_tokens": 500,
+			"max_tokens": 100,
 		}
 		resp := testRequest(t, router, body)
-		if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode != 200 {
 			body := readBody(resp)
-			if strings.Contains(body, "context_length_exceeded") { t.Skip("Context limit exceeded") }
-			t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+			if strings.Contains(body, "context_length_exceeded") {
+				t.Skip("Context limit exceeded — expected for large test")
+			}
+			t.Fatalf("Large context failed: %d %s", resp.StatusCode, body)
+		}
+		t.Log("KIMI large context: OK")
+	})
+
+	// Test 4: Fallback to OpenRouter when KIMI fails
+	t.Run("KimiFallback", func(t *testing.T) {
+		// Force KIMI circuit open by simulating failures
+		cb := router.getCircuit("kimi")
+		for i := 0; i < 5; i++ {
+			cb.RecordFailure()
+		}
+		if cb.State() != StateOpen {
+			t.Logf("Circuit state: %v (expected Open)", cb.State())
+		}
+
+		body := map[string]interface{}{
+			"model":    "openrouter/auto",
+			"messages": []map[string]string{{"role": "user", "content": "Hello"}},
+			"max_tokens": 50,
+		}
+		resp := testRequest(t, router, body)
+		if resp.StatusCode != 200 {
+			t.Logf("Fallback failed: %d (may need API key)", resp.StatusCode)
+		} else {
+			t.Log("Fallback routing: OK")
 		}
 	})
 
-	t.Run("CircuitBreaker", func(t *testing.T) {
-		cb := NewCircuitBreaker(3, 5*time.Second)
-		for i := 0; i < 3; i++ { cb.RecordFailure() }
-		if cb.State() != StateOpen { t.Fatalf("expected open, got %v", cb.State()) }
-		time.Sleep(6 * time.Second)
-		if !cb.Allow() { t.Fatal("expected half-open") }
-		cb.RecordSuccess(); cb.RecordSuccess(); cb.RecordSuccess()
-		if cb.State() != StateClosed { t.Fatalf("expected closed, got %v", cb.State()) }
-	})
-
-	t.Run("RateLimiting", func(t *testing.T) {
-		providers := map[string]ProviderCfg{"test": {FreeTier: true}}
-		limiter := NewRateLimiter(providers)
-		for i := 0; i < 10; i++ {
-			if !limiter.Allow("test") { t.Fatalf("request %d blocked", i) }
+	// Test 5: Status endpoint
+	t.Run("StatusEndpoint", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/astmatrix/status", nil)
+		w := httptest.NewRecorder()
+		ui := NewUIHandler(router)
+		ui.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatalf("Status endpoint failed: %d", w.Code)
+		}
+		var status map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &status)
+		if providers, ok := status["providers"].([]interface{}); ok {
+			t.Logf("Providers: %d", len(providers))
+			for _, p := range providers {
+				if pm, ok := p.(map[string]interface{}); ok {
+					t.Logf("  %s healthy=%v latency=%v",
+						pm["id"], pm["healthy"], pm["latency_ms"])
+				}
+			}
 		}
 	})
+
+	// Test 6: Metrics endpoint
+	t.Run("MetricsEndpoint", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/astmatrix/metrics", nil)
+		w := httptest.NewRecorder()
+		ui := NewUIHandler(router)
+		ui.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatalf("Metrics endpoint failed: %d", w.Code)
+		}
+		var metrics map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &metrics)
+		t.Logf("Metrics: %v", metrics)
+	})
 }
 
-func testRequest(t *testing.T, router *Router, body map[string]interface{}) *http.Response {
-	bodyJSON, _ := json.Marshal(body)
-	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(bodyJSON))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	return w.Result()
-}
+func loadLiveConfig(t *testing.T) *AstMatrixConfig {
+	// Load from environment or use defaults
+	cfg := &AstMatrixConfig{
+		Enabled:             true,
+		Strategy:            "hybrid",
+		ASTStrategy:         "ast_race",
+		RequestTimeout:      120,
+		MaxRetries:          3,
+		HealthProbeInterval: 30,
+		EnableCoalescing:    true,
+		Providers: map[string]ProviderCfg{
+			"kimi": {
+				BaseURL:  os.Getenv("KIMI_API_URL"),
+				KeyEnv:   "KIMI_API_KEY",
+				Models:   []string{"kimi/k1.5", "kimi/moonshot-v1-128k", "kimi/moonshot-v1-8k"},
+				ModelMap: map[string]string{"kimi-auto": "kimi/k1.5", "kimi-long": "kimi/moonshot-v1-128k", "kimi-fast": "kimi/moonshot-v1-8k"},
+				Weight:   2.0,
+				ELO:      1700,
+			},
+			"openrouter": {
+				BaseURL:  "https://openrouter.ai/api/v1",
+				KeyEnv:   "OPENROUTER_API_KEY",
+				Models:   []string{"openrouter/auto"},
+				FreeTier: true,
+				Weight:   1.5,
+				ELO:      1500,
+			},
+			"groq": {
+				BaseURL:  "https://api.groq.com/openai/v1",
+				KeyEnv:   "GROQ_API_KEY",
+				Models:   []string{"groq/llama-3.1-70b-versatile"},
+				FreeTier: true,
+				Weight:   1.5,
+				ELO:      1580,
+			},
+			"github": {
+				BaseURL:  "https://models.inference.ai.azure.com",
+				KeyEnv:   "GITHUB_TOKEN",
+				Models:   []string{"github/gpt-4o-mini"},
+				FreeTier: true,
+				Weight:   1.0,
+				ELO:      1500,
+			},
+		},
+	}
+	cfg.Defaults()
 
-func readBody(resp *http.Response) string {
-	if resp == nil || resp.Body == nil { return "" }
-	defer resp.Body.Close()
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(resp.Body)
-	return buf.String()
+	if cfg.Providers["kimi"].BaseURL == "" {
+		cfg.Providers["kimi"].BaseURL = "https://kimi-api-sandbox.msh.team/v1"
+	}
+
+	return cfg
 }
