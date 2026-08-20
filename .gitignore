@@ -17,3 +17,6 @@ coverage.out
 
 # Temp / scrapped scripts
 tools/
+llama-swap
+*.bak
+*.new
