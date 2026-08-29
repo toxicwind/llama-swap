@@ -21,7 +21,7 @@ func TestNewRateLimiterDefaults(t *testing.T) {
 		msg  string
 	}{
 		{rl.windowDuration, 60 * time.Second, "windowDuration"},
-		{rl.maxRequests, 60, "maxRequests"},
+		{rl.maxRequests, 200, "maxRequests"},
 		{rl.minBackoff, 5 * time.Second, "minBackoff"},
 		{rl.maxBackoff, 120 * time.Second, "maxBackoff"},
 		{rl.backoffFactor, 2.0, "backoffFactor"},
