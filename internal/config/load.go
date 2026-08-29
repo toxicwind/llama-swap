@@ -280,6 +280,17 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 			}
 		}
 
+		for _, envEntry := range modelConfig.Env {
+			matches := macroPatternRegex.FindAllStringSubmatch(envEntry, -1)
+			for _, match := range matches {
+				macroName := match[1]
+				if macroName == "PORT" || macroName == "MODEL_ID" {
+					return Config{}, fmt.Errorf("macro '${%s}' should have been substituted in %s.env", macroName, modelId)
+				}
+				return Config{}, fmt.Errorf("unknown macro '${%s}' found in %s.env", macroName, modelId)
+			}
+		}
+
 		if len(modelConfig.Metadata) > 0 {
 			if err := validateNestedForUnknownMacros(modelConfig.Metadata, fmt.Sprintf("model %s metadata", modelId)); err != nil {
 				return Config{}, err
