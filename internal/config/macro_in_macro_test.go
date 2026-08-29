@@ -177,3 +177,48 @@ models:
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "UNDEFINED")
 }
+
+// Test macro substitution in Env slice
+func TestConfig_MacroInEnv(t *testing.T) {
+	content := `
+startPort: 10000
+macros:
+  "CUDA_DEV": "0,1"
+  "LD_PATH": "/opt/cuda/lib64"
+
+models:
+  test:
+    cmd: echo ok
+    proxy: http://localhost:8080
+    env:
+      - "CUDA_VISIBLE_DEVICES=${CUDA_DEV}"
+      - "LD_LIBRARY_PATH=${LD_PATH}"
+      - "MODEL_NAME=${MODEL_ID}"
+`
+
+	config, err := LoadConfigFromReader(strings.NewReader(content))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{
+		"CUDA_VISIBLE_DEVICES=0,1",
+		"LD_LIBRARY_PATH=/opt/cuda/lib64",
+		"MODEL_NAME=test",
+	}, config.Models["test"].Env)
+}
+
+// Test unknown macro in Env slice returns an error
+func TestConfig_UnknownMacroInEnv(t *testing.T) {
+	content := `
+startPort: 10000
+models:
+  test:
+    cmd: echo ok
+    proxy: http://localhost:8080
+    env:
+      - "MY_VAR=${UNDEFINED_MACRO}"
+`
+
+	_, err := LoadConfigFromReader(strings.NewReader(content))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "UNDEFINED_MACRO")
+	assert.Contains(t, err.Error(), "test.env")
+}
