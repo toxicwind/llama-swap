@@ -149,7 +149,7 @@ type ProfileConfig struct {
 
 func (c *ProfileConfig) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind != yaml.MappingNode {
-		return fmt.Errorf("profile must be a mapping with description and pins")
+		return fmt.Errorf("profile must be a mapping with description and pins (legacy list syntax is no longer supported)")
 	}
 	type rawProfileConfig ProfileConfig
 	var raw rawProfileConfig
