@@ -224,9 +224,12 @@ func TestPeer_ServeHTTP_ApiKeyInjection(t *testing.T) {
 }
 
 func TestPeer_ServeHTTP_NoApiKey(t *testing.T) {
+	// Updated for free-workaround: empty apiKey now injects dummy bearer (ignore anonymous gate)
 	var receivedAuthHeader string
+	var receivedXApiKey string
 	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedAuthHeader = r.Header.Get("Authorization")
+		receivedXApiKey = r.Header.Get("x-api-key")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer testServer.Close()
@@ -252,8 +255,35 @@ func TestPeer_ServeHTTP_NoApiKey(t *testing.T) {
 
 	pr.ServeHTTP(w, req)
 
-	if receivedAuthHeader != "" {
-		t.Errorf("expected no auth header, got %q", receivedAuthHeader)
+	if receivedAuthHeader != "Bearer pollinations-free-workaround" {
+		t.Errorf("expected dummy workaround bearer, got %q", receivedAuthHeader)
+	}
+	if receivedXApiKey != "pollinations-free-workaround" {
+		t.Errorf("expected x-api-key workaround, got %q", receivedXApiKey)
+	}
+}
+
+func TestPeer_ServeHTTP_NoApiKey_StripsClientAuth(t *testing.T) {
+	// Client sends dummy auth, peer with empty apiKey must override with workaround (not leak client key)
+	var receivedAuth string
+	testServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer testServer.Close()
+	proxyURL, _ := url.Parse(testServer.URL)
+	peers := config.PeerDictionaryConfig{
+		"peer1": config.PeerConfig{Proxy: testServer.URL, ProxyURL: proxyURL, ApiKey: "", Models: []string{"test-model"}},
+	}
+	pr, _ := NewPeer(config.Config{Peers: peers}, testLogger)
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	req.Header.Set("Authorization", "Bearer dummy-should-be-stripped")
+	req.Header.Set("x-api-key", "dummy-should-be-stripped")
+	*req = *req.WithContext(shared.SetContext(req.Context(), shared.ReqContextData{Model: "test-model", ModelID: "test-model"}))
+	w := httptest.NewRecorder()
+	pr.ServeHTTP(w, req)
+	if receivedAuth != "Bearer pollinations-free-workaround" {
+		t.Errorf("expected workaround bearer to override client key, got %q", receivedAuth)
 	}
 }
 

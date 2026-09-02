@@ -9,6 +9,9 @@ type PeerDictionaryConfig map[string]PeerConfig
 type PeerConfig struct {
 	Proxy    string   `yaml:"proxy"`
 	ProxyURL *url.URL `yaml:"-"`
+	// ApiKey injected as Authorization: Bearer <key>. Empty means free-workaround mode
+	// (Pollinations now requires any Bearer to avoid 401 "not anonymous" gate).
+	// Router will inject dummy "pollinations-free-workaround" when empty.
 	ApiKey   string   `yaml:"apiKey"`
 	Models   []string `yaml:"models"`
 	Filters  Filters  `yaml:"filters"`

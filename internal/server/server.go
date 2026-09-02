@@ -14,6 +14,7 @@ import (
 	"github.com/mostlygeek/llama-swap/internal/chain"
 	"github.com/mostlygeek/llama-swap/internal/config"
 	"github.com/mostlygeek/llama-swap/internal/event"
+	"github.com/mostlygeek/llama-swap/internal/freeproxy"
 	"github.com/mostlygeek/llama-swap/internal/logmon"
 	"github.com/mostlygeek/llama-swap/internal/perf"
 	"github.com/mostlygeek/llama-swap/internal/process"
@@ -41,9 +42,10 @@ type Server struct {
 	profileMu     sync.RWMutex
 	activeProfile string
 
-	local router.LocalRouter
-	peer  router.Router
-	cloud *astmatrix.Router // cloud model routing via AST Matrix
+	local     router.LocalRouter
+	peer      router.Router
+	cloud     *astmatrix.Router   // cloud model routing via AST Matrix
+	freeproxy *freeproxy.Registry // maximal modular free providers (pollinations, ovh, openrouter, cf-gw) — borrows tau providers
 
 	// modelEvents broadcasts the /models/sse feed Zed's llama.cpp
 	// provider subscribes to. The proxy owns model lifecycle truth,
@@ -183,6 +185,10 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 	if err != nil {
 		return nil, fmt.Errorf("creating peer router: %w", err)
 	}
+	// Maximal modular freeproxy (pollinations, ovh, openrouter, cf-gw) — borrows tau providers concept
+	// Default cache is global home/toxic: $HOME/cache/freeproxy (sovereign global, not /tmp)
+	freeproxyRegistry := freeproxy.NewRegistry(freeproxy.NewMemoryLimiter(15*time.Second), freeproxy.NewGlobalCache())
+	proxylog.Infof("freeproxy modular enabled: providers=%d models=%d cache=%s", len(freeproxyRegistry.Models()), len(freeproxyRegistry.Models()), "home/toxic/cache/freeproxy")
 
 	// Initialize cloud router (AST Matrix) if configured.
 	var cloud *astmatrix.Router
@@ -198,10 +204,10 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 		amCfg.Providers = make(map[string]astmatrix.ProviderCfg)
 		for name, pcfg := range cfg.AstMatrix.Providers {
 			amCfg.Providers[name] = astmatrix.ProviderCfg{
-				BaseURL:  pcfg.BaseURL,
-				KeyEnv:   pcfg.KeyEnv,
+				BaseURL:   pcfg.BaseURL,
+				KeyEnv:    pcfg.KeyEnv,
 				KeyEnvAlt: pcfg.KeyEnvAlt,
-				NoAuth:   pcfg.NoAuth,
+				NoAuth:    pcfg.NoAuth,
 			}
 		}
 		cloud, err = astmatrix.NewRouter(amCfg)
@@ -229,6 +235,7 @@ func New(cfg config.Config, muxlog *logmon.Monitor, proxylog *logmon.Monitor, up
 		local:       local,
 		peer:        peer,
 		cloud:       cloud,
+		freeproxy:   freeproxyRegistry,
 		modelEvents: newModelEventBroadcaster(muxlog),
 		shutdownCtx: shutdownCtx,
 		shutdownFn:  shutdownFn,
@@ -291,6 +298,13 @@ func (s *Server) localPeerHandler(w http.ResponseWriter, r *http.Request) {
 	case s.local.Handles(data.ModelID):
 		s.proxylog.Debugf("dispatch: using local process for model: %s", data.ModelID)
 		s.local.ServeHTTP(w, r)
+	case s.freeproxy != nil && s.freeproxy.Handles(data.ModelID):
+		if p, ok := s.freeproxy.ProviderFor(data.ModelID); ok {
+			s.proxylog.Debugf("dispatch: using freeproxy %s for model: %s", p.ID(), data.ModelID)
+			p.Proxy(w, r)
+			return
+		}
+		shared.SendError(w, r, router.ErrNoRouterFound)
 	case s.peer.Handles(data.ModelID):
 		s.proxylog.Debugf("dispatch: using peer for model: %s", data.ModelID)
 		s.peer.ServeHTTP(w, r)
