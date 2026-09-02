@@ -30,11 +30,16 @@ profiles:
       alias: local-fast
       variant: local-thinking
       peer: peer-model
+      peer-qualified: remote/peer-model
       disabled-empty: ""
       disabled-null: ~
       local: peer-model
+hooks:
+  on_startup:
+    profile: coding
 `))
 	require.NoError(t, err)
+	assert.Equal(t, "coding", cfg.Hooks.OnStartup.Profile)
 
 	profile := cfg.Profiles["coding"]
 	assert.Equal(t, "Coding profile", profile.Description)
@@ -51,6 +56,7 @@ profiles:
 		{"alias", "local-fast", "local", false},
 		{"variant", "local-thinking", "local", false},
 		{"peer", "peer-model", "peer-model", false},
+		{"peer-qualified", "remote/peer-model", "remote/peer-model", false},
 		{"local", "peer-model", "peer-model", false},
 		{"disabled-empty", "", "", true},
 		{"disabled-null", "", "", true},
@@ -104,6 +110,18 @@ func TestConfig_Profiles_Validation(t *testing.T) {
       public: missing
 `,
 			wantErr: "references unknown model",
+		},
+		{
+			name: "unknown startup profile",
+			profile: `profiles:
+  good:
+    pins:
+      public: model
+hooks:
+  on_startup:
+    profile: missing
+`,
+			wantErr: "hooks.on_startup.profile references unknown profile",
 		},
 	}
 

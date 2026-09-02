@@ -2,21 +2,21 @@ package astmatrix
 
 // AstMatrixConfig configures the AST Matrix router.
 type AstMatrixConfig struct {
-	Enabled   bool                   `yaml:"enabled"`
-	Strategy  string                 `yaml:"strategy"`
-	MaxParallel int                  `yaml:"maxParallel"`
-	DbPath    string                 `yaml:"dbPath"`
-	StickyTTL int                    `yaml:"stickyTtl"`
-	FifoMax   int                    `yaml:"fifoMax"`
-	Providers map[string]ProviderCfg `yaml:"providers"`
+	Enabled     bool                   `yaml:"enabled"`
+	Strategy    string                 `yaml:"strategy"`
+	MaxParallel int                    `yaml:"maxParallel"`
+	DbPath      string                 `yaml:"dbPath"`
+	StickyTTL   int                    `yaml:"stickyTtl"`
+	FifoMax     int                    `yaml:"fifoMax"`
+	Providers   map[string]ProviderCfg `yaml:"providers"`
 }
 
 // ProviderCfg is per-provider configuration in the AST Matrix.
 type ProviderCfg struct {
-	BaseURL  string `yaml:"baseUrl"`
-	KeyEnv   string `yaml:"keyEnv"`
+	BaseURL   string `yaml:"baseUrl"`
+	KeyEnv    string `yaml:"keyEnv"`
 	KeyEnvAlt string `yaml:"keyEnvAlt"`
-	NoAuth   bool   `yaml:"noAuth"`
+	NoAuth    bool   `yaml:"noAuth"`
 }
 
 func (a *AstMatrixConfig) Defaults() {

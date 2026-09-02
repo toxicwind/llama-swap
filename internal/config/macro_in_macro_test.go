@@ -220,5 +220,5 @@ models:
 	_, err := LoadConfigFromReader(strings.NewReader(content))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "UNDEFINED_MACRO")
-	assert.Contains(t, err.Error(), "test.env")
+	assert.Contains(t, err.Error(), "test")
 }

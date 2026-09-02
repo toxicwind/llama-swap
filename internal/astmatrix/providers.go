@@ -8,11 +8,11 @@ import (
 
 // provider holds runtime state for one upstream provider.
 type provider struct {
-	base     string
-	keyEnv   string
+	base      string
+	keyEnv    string
 	keyEnvAlt string
-	noAuth   bool
-	models   []string
+	noAuth    bool
+	models    []string
 }
 
 // defaultProviders returns the built-in sovereign provider registry.
@@ -46,8 +46,8 @@ func defaultProviders() map[string]*provider {
 			},
 		},
 		"nvidia": {
-			base:     "https://integrate.api.nvidia.com/v1",
-			keyEnv:   "NVIDIA_API_KEY",
+			base:      "https://integrate.api.nvidia.com/v1",
+			keyEnv:    "NVIDIA_API_KEY",
 			keyEnvAlt: "NVIDIA_NIM_API_KEY",
 			models: []string{
 				"nvidia/nemotron-3-super-120b-a12b",
@@ -131,25 +131,25 @@ var codingAlias = map[string][2]string{
 	"auto": {},
 	"fcm":  {},
 	// Local-first ranked roles
-	"fast":           {"llama-swap", "local-fast"},
-	"local-fast":     {"llama-swap", "local-fast"},
-	"quality":        {"llama-swap", "local-quality"},
-	"local-quality":  {"llama-swap", "local-quality"},
-	"longctx":        {"llama-swap", "local-longctx"},
-	"local-longctx":  {"llama-swap", "local-longctx"},
-	"local-auto":     {"llama-swap", "local-quality"},
+	"fast":          {"llama-swap", "local-fast"},
+	"local-fast":    {"llama-swap", "local-fast"},
+	"quality":       {"llama-swap", "local-quality"},
+	"local-quality": {"llama-swap", "local-quality"},
+	"longctx":       {"llama-swap", "local-longctx"},
+	"local-longctx": {"llama-swap", "local-longctx"},
+	"local-auto":    {"llama-swap", "local-quality"},
 	// OpenRouter free aliases (verified working 2026-07-28)
-	"gemma4-31b":        {"openrouter", "google/gemma-4-31b-it:free"},
-	"gemma4-26b":        {"openrouter", "google/gemma-4-26b-a4b-it:free"},
-	"nemotron-super":    {"openrouter", "nvidia/nemotron-3-super-120b-a12b:free"},
-	"nemotron-nano":     {"openrouter", "nvidia/nemotron-3-nano-30b-a3b:free"},
-	"nemotron-ultra":    {"openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"},
-	"nemotron-omni":     {"openrouter", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"},
-	"laguna-xs":         {"openrouter", "poolside/laguna-xs-2.1:free"},
-	"laguna-s":          {"openrouter", "poolside/laguna-s-2.1:free"},
-	"north-mini":        {"openrouter", "cohere/north-mini-code:free"},
-	"gpt-oss-20b":       {"openrouter", "openai/gpt-oss-20b:free"},
-	"ling-flash":        {"openrouter", "inclusionai/ling-3.0-flash:free"},
+	"gemma4-31b":     {"openrouter", "google/gemma-4-31b-it:free"},
+	"gemma4-26b":     {"openrouter", "google/gemma-4-26b-a4b-it:free"},
+	"nemotron-super": {"openrouter", "nvidia/nemotron-3-super-120b-a12b:free"},
+	"nemotron-nano":  {"openrouter", "nvidia/nemotron-3-nano-30b-a3b:free"},
+	"nemotron-ultra": {"openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"},
+	"nemotron-omni":  {"openrouter", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"},
+	"laguna-xs":      {"openrouter", "poolside/laguna-xs-2.1:free"},
+	"laguna-s":       {"openrouter", "poolside/laguna-s-2.1:free"},
+	"north-mini":     {"openrouter", "cohere/north-mini-code:free"},
+	"gpt-oss-20b":    {"openrouter", "openai/gpt-oss-20b:free"},
+	"ling-flash":     {"openrouter", "inclusionai/ling-3.0-flash:free"},
 	// NVIDIA NIM aliases
 	"nim-nemotron-super":    {"nvidia", "nvidia/nemotron-3-super-120b-a12b"},
 	"nim-nemotron-nano":     {"nvidia", "nvidia/nemotron-3-nano-30b-a3b"},
@@ -157,12 +157,12 @@ var codingAlias = map[string][2]string{
 	"nim-llama-3.3-70b":     {"nvidia", "meta/llama-3.3-70b-instruct"},
 	"nim-qwen3.5-397b":      {"nvidia", "qwen/qwen3.5-397b-a17b"},
 	"nim-qwen3.5-122b":      {"nvidia", "qwen/qwen3.5-122b-a10b"},
-	"nim-deepseek-v4-flash":  {"nvidia", "deepseek-ai/deepseek-v4-flash"},
-	"nim-deepseek-v4-pro":    {"nvidia", "deepseek-ai/deepseek-v4-pro"},
-	"nim-mistral-large-3":    {"nvidia", "mistralai/mistral-large-3-675b-instruct-2512"},
-	"nim-gemma4-31b":         {"nvidia", "google/gemma-4-31b-it"},
-	"nim-glm5.2":             {"nvidia", "z-ai/glm-5.2"},
-	"nim-inkling":            {"nvidia", "thinkingmachines/inkling"},
+	"nim-deepseek-v4-flash": {"nvidia", "deepseek-ai/deepseek-v4-flash"},
+	"nim-deepseek-v4-pro":   {"nvidia", "deepseek-ai/deepseek-v4-pro"},
+	"nim-mistral-large-3":   {"nvidia", "mistralai/mistral-large-3-675b-instruct-2512"},
+	"nim-gemma4-31b":        {"nvidia", "google/gemma-4-31b-it"},
+	"nim-glm5.2":            {"nvidia", "z-ai/glm-5.2"},
+	"nim-inkling":           {"nvidia", "thinkingmachines/inkling"},
 	// Google aliases
 	"gemini-2.5-flash":      {"google", "models/gemini-2.5-flash"},
 	"gemini-2.5-flash-lite": {"google", "models/gemini-2.5-flash-lite"},
@@ -174,19 +174,19 @@ var codingAlias = map[string][2]string{
 	"mistral-large":  {"mistral", "mistral-large-latest"},
 	"mistral-medium": {"mistral", "mistral-medium-latest"},
 	// Groq aliases
-	"groq-llama-3.3-70b":   {"groq", "llama-3.3-70b-versatile"},
-	"groq-qwen3-32b":       {"groq", "qwen/qwen3-32b"},
-	"groq-qwen3.6-27b":     {"groq", "qwen/qwen3.6-27b"},
-	"groq-gpt-oss-120b":    {"groq", "openai/gpt-oss-120b"},
-	"groq-gpt-oss-20b":     {"groq", "openai/gpt-oss-20b"},
-	"groq-llama-4-scout":   {"groq", "meta-llama/llama-4-scout-17b-16e-instruct"},
+	"groq-llama-3.3-70b": {"groq", "llama-3.3-70b-versatile"},
+	"groq-qwen3-32b":     {"groq", "qwen/qwen3-32b"},
+	"groq-qwen3.6-27b":   {"groq", "qwen/qwen3.6-27b"},
+	"groq-gpt-oss-120b":  {"groq", "openai/gpt-oss-120b"},
+	"groq-gpt-oss-20b":   {"groq", "openai/gpt-oss-20b"},
+	"groq-llama-4-scout": {"groq", "meta-llama/llama-4-scout-17b-16e-instruct"},
 	// Extended provider aliases from registry
-	"opencode":              {"opencode", "opencode"},
-	"xai-grok-4":            {"xai", "grok-4"},
-	"xai-grok-3":            {"xai", "grok-3"},
-	"mimo-auto":             {"mimo-free", "mimo-auto"},
-	"perplexity-sonar":      {"perplexity", "sonar-pro"},
-	"together-llama-3.3":    {"together", "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
+	"opencode":           {"opencode", "opencode"},
+	"xai-grok-4":         {"xai", "grok-4"},
+	"xai-grok-3":         {"xai", "grok-3"},
+	"mimo-auto":          {"mimo-free", "mimo-auto"},
+	"perplexity-sonar":   {"perplexity", "sonar-pro"},
+	"together-llama-3.3": {"together", "meta-llama/Llama-3.3-70B-Instruct-Turbo"},
 }
 
 // localPatterns matches known local GGUF model ID prefixes.

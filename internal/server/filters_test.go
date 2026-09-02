@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/mostlygeek/llama-swap/internal/config"
-	"github.com/mostlygeek/llama-swap/internal/shared"
+	"github.com/mostlygeek/llama-swap/internal/swaputil"
 	"github.com/tidwall/gjson"
 )
 
@@ -56,6 +56,27 @@ func TestServer_ApplyFilters(t *testing.T) {
 	})
 }
 
+func TestServer_ResolveFilters_QualifiedPeer(t *testing.T) {
+	want := config.Filters{StripParams: "temperature"}
+	cfg := config.Config{Peers: config.PeerDictionaryConfig{
+		"remote": {
+			Models:  []string{"org/model"},
+			Filters: want,
+		},
+	}}
+
+	useModelName, got, ok := resolveFilters(cfg, "remote/org/model")
+	if !ok {
+		t.Fatal("qualified peer filters were not resolved")
+	}
+	if useModelName != "" {
+		t.Fatalf("useModelName = %q, want empty for peer", useModelName)
+	}
+	if got.StripParams != want.StripParams {
+		t.Fatalf("StripParams = %q, want %q", got.StripParams, want.StripParams)
+	}
+}
+
 func TestServer_FormFilterMiddleware(t *testing.T) {
 	cfg := config.Config{Models: map[string]config.ModelConfig{
 		"whisper": {UseModelName: "whisper-large-v3"},
@@ -72,9 +93,9 @@ func TestServer_FormFilterMiddleware(t *testing.T) {
 	r.Header.Set("Content-Type", mw.FormDataContentType())
 
 	var gotModel, gotFilename, gotFileBody string
-	var gotContext shared.ReqContextData
+	var gotContext swaputil.ReqContextData
 	final := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseMultipartForm(shared.MaxMultiPartSize); err != nil {
+		if err := r.ParseMultipartForm(swaputil.MaxMultiPartSize); err != nil {
 			t.Errorf("ParseMultipartForm: %v", err)
 			return
 		}
@@ -93,7 +114,7 @@ func TestServer_FormFilterMiddleware(t *testing.T) {
 			return
 		}
 		gotFileBody = string(data)
-		gotContext, _ = shared.ReadContext(r.Context())
+		gotContext, _ = swaputil.ReadContext(r.Context())
 	})
 	CreateFormFilterMiddleware(cfg)(final).ServeHTTP(httptest.NewRecorder(), r)
 

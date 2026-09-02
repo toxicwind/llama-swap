@@ -3,76 +3,33 @@ package config
 import (
 	"errors"
 	"fmt"
-
-	"gopkg.in/yaml.v3"
 )
 
 const (
-	MODEL_CONFIG_DEFAULT_TTL = -1
+	MODEL_CONFIG_DEFAULT_TTL   = -1
+	MODEL_CONFIG_DEFAULT_PROXY = "http://127.0.0.1:${PORT}"
+	comfyUIConcurrencyLimit    = 50
+
+	// ComfyUIModelID identifies the model used by the /comfyui endpoint.
+	ComfyUIModelID = "comfyui_auto"
 )
 
 var validModalities = map[string]struct{}{
 	"text":  {},
 	"audio": {},
 	"image": {},
+	"video": {},
 }
 
 // ModelCapConfig defines what modalities and features a model supports.
 // Used in /v1/models to inform clients. An empty block (all zero values) is
 // treated as not configured.
-//
-// The custom UnmarshalYAML stores an untyped representation so YAML anchors
-// can be resolved before macro substitution. After ResolveMacros is called
-// the typed fields (In, Out, Tools, Reranker, Context) are populated.
 type ModelCapConfig struct {
 	In       []string `yaml:"in"`
 	Out      []string `yaml:"out"`
 	Tools    bool     `yaml:"tools"`
 	Reranker bool     `yaml:"reranker"`
 	Context  int      `yaml:"context"`
-
-	raw map[string]any
-}
-
-// UnmarshalYAML decodes capabilities into an untyped map. This materializes
-// YAML aliases and merge keys while allowing macro placeholders in fields
-// that will ultimately be decoded as ints or bools.
-func (c *ModelCapConfig) UnmarshalYAML(value *yaml.Node) error {
-	return value.Decode(&c.raw)
-}
-
-// ResolveMacros substitutes all macros in the untyped representation (LIFO
-// order matching LoadConfigFromReader), then decodes the resolved values into
-// the typed fields.
-func (c *ModelCapConfig) ResolveMacros(macros MacroList) error {
-	if c.raw == nil {
-		return c.Validate()
-	}
-
-	var resolved any = c.raw
-	for i := len(macros) - 1; i >= 0; i-- {
-		entry := macros[i]
-		var err error
-		resolved, err = substituteMacroInValue(resolved, entry.Name, entry.Value)
-		if err != nil {
-			return fmt.Errorf("capabilities: failed macro substitution: %w", err)
-		}
-	}
-	if err := validateNestedForUnknownMacros(resolved, "capabilities"); err != nil {
-		return err
-	}
-
-	var node yaml.Node
-	if err := node.Encode(resolved); err != nil {
-		return fmt.Errorf("capabilities: failed to encode after macro substitution: %w", err)
-	}
-	*c = ModelCapConfig{}
-	type rawCap ModelCapConfig
-	if err := node.Decode((*rawCap)(c)); err != nil {
-		return fmt.Errorf("capabilities: failed to decode after macro substitution: %w", err)
-	}
-
-	return c.Validate()
 }
 
 // Empty returns true when all fields are at their zero values.
@@ -85,12 +42,12 @@ func (c ModelCapConfig) Empty() bool {
 func (c ModelCapConfig) Validate() error {
 	for _, m := range c.In {
 		if _, ok := validModalities[m]; !ok {
-			return fmt.Errorf("capabilities.in: invalid modality %q, must be one of: text, audio, image", m)
+			return fmt.Errorf("capabilities.in: invalid modality %q, must be one of: text, audio, image, video", m)
 		}
 	}
 	for _, m := range c.Out {
 		if _, ok := validModalities[m]; !ok {
-			return fmt.Errorf("capabilities.out: invalid modality %q, must be one of: text, audio, image", m)
+			return fmt.Errorf("capabilities.out: invalid modality %q, must be one of: text, audio, image, video", m)
 		}
 	}
 	if c.Context < 0 {
@@ -108,6 +65,13 @@ type TimeoutsConfig struct {
 	TLSHandshake   int `yaml:"tlsHandshake"`
 	ExpectContinue int `yaml:"expectContinue"`
 	IdleConn       int `yaml:"idleConn"`
+}
+
+// CompatConfig holds compatibility settings for upstream applications.
+type CompatConfig struct {
+	// IgnoreWebsockets prevents websocket connections from participating in
+	// model lifecycle activity such as swapping, concurrency, and TTL tracking.
+	IgnoreWebsockets bool `yaml:"ignoreWebsockets"`
 }
 
 type ModelConfig struct {
@@ -146,6 +110,9 @@ type ModelConfig struct {
 	// Timeout settings for proxy connections
 	Timeouts TimeoutsConfig `yaml:"timeouts"`
 
+	// Compatibility settings for upstream applications.
+	Compat CompatConfig `yaml:"compat"`
+
 	// Capabilities defines what modalities and features the model supports.
 	Capabilities ModelCapConfig `yaml:"capabilities"`
 
@@ -163,7 +130,7 @@ func (m *ModelConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	defaults := rawModelConfig{
 		Cmd:              "",
 		CmdStop:          "",
-		Proxy:            "http://127.0.0.1:${PORT}",
+		Proxy:            MODEL_CONFIG_DEFAULT_PROXY,
 		Aliases:          []string{},
 		Env:              []string{},
 		CheckEndpoint:    "/health",
@@ -207,10 +174,7 @@ func (m *ModelConfig) ResolveMacros(macros MacroList) error {
 		fn   func(MacroList) error
 	}{
 		{"capabilities", func(ml MacroList) error {
-			if m.Capabilities.raw != nil {
-				return m.Capabilities.ResolveMacros(ml)
-			}
-			return nil
+			return m.Capabilities.Validate()
 		}},
 	}
 	for _, r := range resolvers {

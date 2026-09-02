@@ -81,8 +81,8 @@ func NewCloudflareGatewayProvider() *CloudflareGatewayProvider {
 	return p
 }
 
-func (c *CloudflareGatewayProvider) ID() string      { return "cloudflare-gw" }
-func (c *CloudflareGatewayProvider) BaseURL() string { return c.base }
+func (c *CloudflareGatewayProvider) ID() string       { return "cloudflare-gw" }
+func (c *CloudflareGatewayProvider) BaseURL() string  { return c.base }
 func (c *CloudflareGatewayProvider) Models() []string { return c.models }
 func (c *CloudflareGatewayProvider) Handles(model string) bool {
 	if !c.enabled {

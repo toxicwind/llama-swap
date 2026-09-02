@@ -25,7 +25,17 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		return Config{}, err
 	}
 
-	// Unmarshal into full Config with defaults
+	raw, macroConfig, err := resolveConfigMacros(yamlStr)
+	if err != nil {
+		return Config{}, err
+	}
+
+	var node yaml.Node
+	if err = node.Encode(raw); err != nil {
+		return Config{}, err
+	}
+
+	// Decode the resolved values into the full Config with defaults.
 	config := Config{
 		HealthCheckTimeout: 120,
 		StartPort:          5800,
@@ -41,8 +51,13 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 			"X-Litellm-Session-Id",
 		}}},
 	}
-	if err = yaml.Unmarshal([]byte(yamlStr), &config); err != nil {
+	if err = node.Decode(&config); err != nil {
 		return Config{}, err
+	}
+	config.Macros = macroConfig.Macros
+	for modelID, modelConfig := range config.Models {
+		modelConfig.Macros = macroConfig.Models[modelID].Macros
+		config.Models[modelID] = modelConfig
 	}
 
 	if config.HealthCheckTimeout < 15 {
@@ -103,14 +118,7 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		}
 	}
 
-	// Validate global macros
-	for _, macro := range config.Macros {
-		if err = validateMacro(macro.Name, macro.Value); err != nil {
-			return Config{}, err
-		}
-	}
-
-	// Get and sort all model IDs for consistent port assignment
+	// Sort model IDs for deterministic validation and normalization.
 	modelIds := make([]string, 0, len(config.Models))
 	for modelId := range config.Models {
 		modelIds = append(modelIds, modelId)
@@ -121,10 +129,12 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 	for _, modelId := range modelIds {
 		modelConfig := config.Models[modelId]
 		modelConfig.HealthCheckTimeout = config.HealthCheckTimeout
-
-		// Strip comments from command fields
-		modelConfig.Cmd = StripComments(modelConfig.Cmd)
-		modelConfig.CmdStop = StripComments(modelConfig.CmdStop)
+		if modelId == ComfyUIModelID {
+			if modelConfig.ConcurrencyLimit < comfyUIConcurrencyLimit {
+				modelConfig.ConcurrencyLimit = comfyUIConcurrencyLimit
+			}
+			modelConfig.Compat.IgnoreWebsockets = true
+		}
 
 		// set model TTL to globalTTL it is the default value
 		if modelConfig.UnloadAfter == MODEL_CONFIG_DEFAULT_TTL {
@@ -194,10 +204,7 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 				newSetParamsByID := make(map[string]map[string]any, len(modelConfig.Filters.SetParamsByID))
 				for key, paramMap := range modelConfig.Filters.SetParamsByID {
 					newKey := strings.ReplaceAll(key, macroSlug, macroStr)
-					newValAny, err := substituteMacroInValue(any(paramMap), entry.Name, entry.Value)
-					if err != nil {
-						return Config{}, fmt.Errorf("model %s filters.setParamsByID: %s", modelId, err.Error())
-					}
+					newValAny := substituteMacroInValue(any(paramMap), entry.Name, entry.Value)
 					newParamMap, ok := newValAny.(map[string]any)
 					if !ok {
 						return Config{}, fmt.Errorf("model %s filters.setParamsByID: unexpected type after macro substitution", modelId)
@@ -209,17 +216,14 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 
 			// Substitute in metadata (type-preserving)
 			if len(modelConfig.Metadata) > 0 {
-				result, err := substituteMacroInValue(modelConfig.Metadata, entry.Name, entry.Value)
-				if err != nil {
-					return Config{}, fmt.Errorf("model %s metadata: %s", modelId, err.Error())
-				}
+				result := substituteMacroInValue(modelConfig.Metadata, entry.Name, entry.Value)
 				modelConfig.Metadata = result.(map[string]any)
 			}
 		}
 
 		// Resolve macros in capabilities (they couldn't be decoded properly
 		// during YAML unmarshal because e.g. "${default_ctx}" is not an int).
-		if err := modelConfig.Capabilities.ResolveMacros(mergedMacros); err != nil {
+		if err := modelConfig.Capabilities.Validate(); err != nil {
 			return Config{}, fmt.Errorf("model %s: %w", modelId, err)
 		}
 
@@ -245,10 +249,7 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 			}
 
 			if len(modelConfig.Metadata) > 0 {
-				result, err := substituteMacroInValue(modelConfig.Metadata, "PORT", nextPort)
-				if err != nil {
-					return Config{}, fmt.Errorf("model %s metadata: %s", modelId, err.Error())
-				}
+				result := substituteMacroInValue(modelConfig.Metadata, "PORT", nextPort)
 				modelConfig.Metadata = result.(map[string]any)
 			}
 
@@ -292,19 +293,17 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		}
 
 		if len(modelConfig.Metadata) > 0 {
-			if err := validateNestedForUnknownMacros(modelConfig.Metadata, fmt.Sprintf("model %s metadata", modelId)); err != nil {
-				return Config{}, err
-			}
 		}
 
 		// Validate SetParamsByID keys and values
-		for key, paramMap := range modelConfig.Filters.SetParamsByID {
+		for key := range modelConfig.Filters.SetParamsByID {
 			if matches := macroPatternRegex.FindAllStringSubmatch(key, -1); len(matches) > 0 {
 				return Config{}, fmt.Errorf("unknown macro '${%s}' found in model %s filters.setParamsByID key", matches[0][1], modelId)
 			}
-			if err := validateNestedForUnknownMacros(any(paramMap), fmt.Sprintf("model %s filters.setParamsByID[%s]", modelId, key)); err != nil {
-				return Config{}, err
-			}
+		}
+
+		if err := modelConfig.Capabilities.Validate(); err != nil {
+			return Config{}, fmt.Errorf("model %s: %w", modelId, err)
 		}
 
 		// Auto-register setParamsByID keys as aliases (skip the model's own ID)
@@ -376,11 +375,9 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 	}
 
 	if config.Matrix != nil {
-		expandedSets, err := ValidateMatrix(*config.Matrix, config.Models)
-		if err != nil {
+		if err := ValidateMatrix(config.Matrix, config.Models); err != nil {
 			return Config{}, fmt.Errorf("matrix: %w", err)
 		}
-		config.Matrix.ExpandedSets = expandedSets
 	} else {
 		config = AddDefaultGroupToConfig(config)
 
@@ -403,8 +400,8 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 	}
 
 	// Build the canonical Config.Routing from the effective result. Both legacy
-	// and new-style configs converge here. The Matrix pointer is shared so
-	// ExpandedSets stays in one place.
+	// and new-style configs converge here. The Matrix pointer is shared so the
+	// compiled matrix program stays in one place.
 	if config.Matrix != nil {
 		config.Routing.Router.Use = "matrix"
 	} else {
@@ -451,40 +448,12 @@ func LoadConfigFromReader(r io.Reader) (Config, error) {
 		config.RequiredAPIKeys[i] = apikey
 	}
 
-	// Process peers with global macro substitution
-	for peerName, peerConfig := range config.Peers {
-		// Substitute global macros (LIFO order)
-		for i := len(config.Macros) - 1; i >= 0; i-- {
-			entry := config.Macros[i]
-			macroSlug := fmt.Sprintf("${%s}", entry.Name)
-			macroStr := fmt.Sprintf("%v", entry.Value)
+	if err := ValidatePeerNamespace(config); err != nil {
+		return Config{}, err
+	}
 
-			peerConfig.ApiKey = strings.ReplaceAll(peerConfig.ApiKey, macroSlug, macroStr)
-			peerConfig.Filters.StripParams = strings.ReplaceAll(peerConfig.Filters.StripParams, macroSlug, macroStr)
-
-			// Substitute in setParams (type-preserving)
-			if len(peerConfig.Filters.SetParams) > 0 {
-				result, err := substituteMacroInValue(peerConfig.Filters.SetParams, entry.Name, entry.Value)
-				if err != nil {
-					return Config{}, fmt.Errorf("peers.%s.filters.setParams: %w", peerName, err)
-				}
-				peerConfig.Filters.SetParams = result.(map[string]any)
-			}
-		}
-
-		// Validate no unknown macros remain
-		if matches := macroPatternRegex.FindAllStringSubmatch(peerConfig.ApiKey, -1); len(matches) > 0 {
-			return Config{}, fmt.Errorf("peers.%s.apiKey: unknown macro '${%s}'", peerName, matches[0][1])
-		}
-		if matches := macroPatternRegex.FindAllStringSubmatch(peerConfig.Filters.StripParams, -1); len(matches) > 0 {
-			return Config{}, fmt.Errorf("peers.%s.filters.stripParams: unknown macro '${%s}'", peerName, matches[0][1])
-		}
-		if len(peerConfig.Filters.SetParams) > 0 {
-			if err := validateNestedForUnknownMacros(peerConfig.Filters.SetParams, fmt.Sprintf("peers.%s.filters.setParams", peerName)); err != nil {
-				return Config{}, err
-			}
-		}
-		config.Peers[peerName] = peerConfig
+	if err := validateSelectors(config); err != nil {
+		return Config{}, err
 	}
 
 	if err := validateProfiles(config); err != nil {
@@ -510,8 +479,16 @@ func validateProfiles(config Config) error {
 				continue
 			}
 			if _, found := config.ResolveBaseModel(target); !found {
+				if _, found := config.Selectors[target]; found {
+					continue
+				}
 				return fmt.Errorf("profiles.%s.pins.%s references unknown model %q", profileName, pin, target)
 			}
+		}
+	}
+	if profile := config.Hooks.OnStartup.Profile; profile != "" {
+		if _, found := config.Profiles[profile]; !found {
+			return fmt.Errorf("hooks.on_startup.profile references unknown profile %q", profile)
 		}
 	}
 	return nil

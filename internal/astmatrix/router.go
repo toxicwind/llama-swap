@@ -104,7 +104,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if strategyName == "" {
 		strategyName = r.config.Strategy
 	}
-	
+
 	strategyFn, ok := strategies[strategyName]
 	if !ok {
 		strategyFn = strategies["hybrid"]
@@ -194,8 +194,8 @@ func callOne(ctx context.Context, m *Matrix, provider, model string, body map[st
 
 	url := strings.TrimRight(prov.base, "/") + "/chat/completions"
 	headers := map[string]string{
-		"Content-Type":   "application/json",
-		"User-Agent":     "SovereignASTMatrix/3.1",
+		"Content-Type":    "application/json",
+		"User-Agent":      "SovereignASTMatrix/3.1",
 		"Accept-Encoding": "identity",
 	}
 	if !prov.noAuth {
@@ -213,7 +213,7 @@ func callOne(ctx context.Context, m *Matrix, provider, model string, body map[st
 		payload[k] = v
 	}
 	payload["model"] = model
-    stream, _ := body["stream"].(bool)
+	stream, _ := body["stream"].(bool)
 	payload["stream"] = stream
 
 	bodyBytes, err := json.Marshal(payload)

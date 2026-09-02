@@ -76,9 +76,9 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // Simple in-memory RateLimiter and Cache for maximal but ponytail-style
 
 type memoryLimiter struct {
-	mu        sync.Mutex
-	last      map[string]time.Time
-	interval  time.Duration
+	mu       sync.Mutex
+	last     map[string]time.Time
+	interval time.Duration
 }
 
 func NewMemoryLimiter(interval time.Duration) RateLimiter {

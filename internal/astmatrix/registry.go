@@ -15,40 +15,40 @@ type ProviderDef struct {
 }
 
 // ModelEntry is one model under a provider.
-type ModelEntry struct {	
+type ModelEntry struct {
 	ID   string
 	Name string
 }
 
 // keyEnvOverride maps provider IDs to their API key environment variable names.
 var keyEnvOverride = map[string]string{
-	"alicode":      "ALICODE_API_KEY",
-	"alicode-intl": "ALICODE_INTL_API_KEY",
-	"blackbox":     "BLACKBOX_API_KEY",
-	"byteplus":     "BYTEPLUS_API_KEY",
-	"cerebras":     "CEREBRAS_API_KEY",
-	"chutes":       "CHUTES_API_KEY",
-	"cohere":       "COHERE_API_KEY",
-	"featherless":  "FEATHERLESS_API_KEY",
-	"fireworks":    "FIREWORKS_API_KEY",
-	"github":       "GITHUB_TOKEN",
-	"groq":         "GROQ_API_KEY",
-	"hyperbolic":   "HYPERBOLIC_API_KEY",
-	"iflow":        "IFLOW_API_KEY",
-	"mimo-free":    "",
-	"mistral":      "MISTRAL_API_KEY",
-	"nebius":       "NEBIUS_API_KEY",
-	"nvidia":       "NVIDIA_API_KEY",
-	"openai":       "OPENAI_API_KEY",
-	"opencode":     "",
-	"opencode-go":  "OPENCODE_API_KEY",
-	"openrouter":   "OPENROUTER_API_KEY",
-	"perplexity":   "PERPLEXITY_API_KEY",
-	"siliconflow":  "SILICONFLOW_API_KEY",
-	"together":     "TOGETHER_API_KEY",
-	"venice":       "VENICE_API_KEY",
+	"alicode":        "ALICODE_API_KEY",
+	"alicode-intl":   "ALICODE_INTL_API_KEY",
+	"blackbox":       "BLACKBOX_API_KEY",
+	"byteplus":       "BYTEPLUS_API_KEY",
+	"cerebras":       "CEREBRAS_API_KEY",
+	"chutes":         "CHUTES_API_KEY",
+	"cohere":         "COHERE_API_KEY",
+	"featherless":    "FEATHERLESS_API_KEY",
+	"fireworks":      "FIREWORKS_API_KEY",
+	"github":         "GITHUB_TOKEN",
+	"groq":           "GROQ_API_KEY",
+	"hyperbolic":     "HYPERBOLIC_API_KEY",
+	"iflow":          "IFLOW_API_KEY",
+	"mimo-free":      "",
+	"mistral":        "MISTRAL_API_KEY",
+	"nebius":         "NEBIUS_API_KEY",
+	"nvidia":         "NVIDIA_API_KEY",
+	"openai":         "OPENAI_API_KEY",
+	"opencode":       "",
+	"opencode-go":    "OPENCODE_API_KEY",
+	"openrouter":     "OPENROUTER_API_KEY",
+	"perplexity":     "PERPLEXITY_API_KEY",
+	"siliconflow":    "SILICONFLOW_API_KEY",
+	"together":       "TOGETHER_API_KEY",
+	"venice":         "VENICE_API_KEY",
 	"volcengine-ark": "VOLCENGINE_API_KEY",
-	"xai":          "XAI_API_KEY",
+	"xai":            "XAI_API_KEY",
 }
 
 // RegistryProviders is the merged provider catalog.

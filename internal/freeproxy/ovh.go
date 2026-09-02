@@ -14,10 +14,10 @@ import (
 // It requires OVH_API_KEY env (from https://kepler.ai.cloud.ovh.net/v1/oauth/ovh/authorize).
 // If no key, it is disabled (Handles always false) but still listed for health.
 type OVHProvider struct {
-	base    string
-	apiKey  string
-	proxy   *httputil.ReverseProxy
-	models  []string
+	base     string
+	apiKey   string
+	proxy    *httputil.ReverseProxy
+	models   []string
 	modelSet map[string]struct{}
 }
 
@@ -65,8 +65,8 @@ func NewOVHProvider() *OVHProvider {
 	return p
 }
 
-func (o *OVHProvider) ID() string      { return "ovhcloud-free" }
-func (o *OVHProvider) BaseURL() string { return o.base }
+func (o *OVHProvider) ID() string       { return "ovhcloud-free" }
+func (o *OVHProvider) BaseURL() string  { return o.base }
 func (o *OVHProvider) Models() []string { return o.models }
 func (o *OVHProvider) Handles(model string) bool {
 	if o.apiKey == "" {

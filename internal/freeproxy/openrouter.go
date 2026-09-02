@@ -13,10 +13,10 @@ import (
 // OpenRouterProvider proxies to OpenRouter free tier (requires free-tier API key, no card).
 // It is disabled if OPENROUTER_API_KEY is not free-tier or missing.
 type OpenRouterProvider struct {
-	base    string
-	apiKey  string
-	proxy   *httputil.ReverseProxy
-	models  []string
+	base     string
+	apiKey   string
+	proxy    *httputil.ReverseProxy
+	models   []string
 	modelSet map[string]struct{}
 }
 
@@ -65,8 +65,8 @@ func NewOpenRouterProvider() *OpenRouterProvider {
 	return p
 }
 
-func (o *OpenRouterProvider) ID() string      { return "openrouter-free" }
-func (o *OpenRouterProvider) BaseURL() string { return o.base }
+func (o *OpenRouterProvider) ID() string       { return "openrouter-free" }
+func (o *OpenRouterProvider) BaseURL() string  { return o.base }
 func (o *OpenRouterProvider) Models() []string { return o.models }
 func (o *OpenRouterProvider) Handles(model string) bool {
 	if o.apiKey == "" {

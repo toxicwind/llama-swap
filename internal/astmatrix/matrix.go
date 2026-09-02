@@ -21,7 +21,7 @@ type Matrix struct {
 	circuitOpenUntil map[string]float64
 	fifoDepth        int
 	health           *HealthDB
-	rateLimiter    *PerProviderRateLimiter
+	rateLimiter      *PerProviderRateLimiter
 	config           *AstMatrixConfig
 }
 
@@ -48,10 +48,10 @@ func NewMatrix(cfg *AstMatrixConfig) (*Matrix, error) {
 			}
 		} else {
 			providers[name] = &provider{
-				base:     pcfg.BaseURL,
-				keyEnv:   pcfg.KeyEnv,
+				base:      pcfg.BaseURL,
+				keyEnv:    pcfg.KeyEnv,
 				keyEnvAlt: pcfg.KeyEnvAlt,
-				noAuth:   pcfg.NoAuth,
+				noAuth:    pcfg.NoAuth,
 			}
 		}
 	}
@@ -69,7 +69,7 @@ func NewMatrix(cfg *AstMatrixConfig) (*Matrix, error) {
 	}
 
 	m := &Matrix{
-		rateLimiter:  NewRateLimiter(),
+		rateLimiter:      NewRateLimiter(),
 		providers:        providers,
 		fail:             make(map[string]int),
 		lastFail:         make(map[string]float64),

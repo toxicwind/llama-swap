@@ -46,6 +46,26 @@ func (ml *MacroList) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// MarshalYAML renders the list back as an ordered mapping, the shape it is
+// written in, rather than the default slice-of-structs. Only diagnostics such
+// as the config__get_config tool marshal a Config, but when they do the macro
+// block should read like the source file.
+func (ml MacroList) MarshalYAML() (interface{}, error) {
+	node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, entry := range ml {
+		var key, value yaml.Node
+		if err := key.Encode(entry.Name); err != nil {
+			return nil, fmt.Errorf("encoding macro name %q: %w", entry.Name, err)
+		}
+		if err := value.Encode(entry.Value); err != nil {
+			return nil, fmt.Errorf("encoding macro value for %q: %w", entry.Name, err)
+		}
+		node.Content = append(node.Content, &key, &value)
+	}
+	return node, nil
+}
+
+// Get retrieves a macro value by name
 func (ml MacroList) Get(name string) (any, bool) {
 	for _, entry := range ml {
 		if entry.Name == name {
@@ -91,6 +111,7 @@ type HooksConfig struct {
 
 type HookOnStartup struct {
 	Preload []string `yaml:"preload"`
+	Profile string   `yaml:"profile"`
 }
 
 type Store struct {
@@ -107,21 +128,21 @@ type UIActivityConfig struct {
 
 // AstMatrixConfig configures the AST Matrix cloud router.
 type AstMatrixConfig struct {
-	Enabled     bool                     `yaml:"enabled"`
-	Strategy    string                   `yaml:"strategy"`
-	MaxParallel int                      `yaml:"maxParallel"`
-	DbPath      string                   `yaml:"dbPath"`
-	StickyTTL   int                      `yaml:"stickyTtl"`
-	FifoMax     int                      `yaml:"fifoMax"`
-	Providers   map[string]ProviderCfg   `yaml:"providers"`
+	Enabled     bool                   `yaml:"enabled"`
+	Strategy    string                 `yaml:"strategy"`
+	MaxParallel int                    `yaml:"maxParallel"`
+	DbPath      string                 `yaml:"dbPath"`
+	StickyTTL   int                    `yaml:"stickyTtl"`
+	FifoMax     int                    `yaml:"fifoMax"`
+	Providers   map[string]ProviderCfg `yaml:"providers"`
 }
 
 // ProviderCfg is per-provider configuration in the AST Matrix.
 type ProviderCfg struct {
-	BaseURL  string `yaml:"baseUrl"`
-	KeyEnv   string `yaml:"keyEnv"`
+	BaseURL   string `yaml:"baseUrl"`
+	KeyEnv    string `yaml:"keyEnv"`
 	KeyEnvAlt string `yaml:"keyEnvAlt"`
-	NoAuth   bool   `yaml:"noAuth"`
+	NoAuth    bool   `yaml:"noAuth"`
 }
 
 func (a *AstMatrixConfig) Defaults() {
@@ -161,36 +182,43 @@ func (c *ProfileConfig) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type Config struct {
-	HealthCheckTimeout int                      `yaml:"healthCheckTimeout"`
-	LogRequests        bool                     `yaml:"logRequests"`
-	LogLevel           string                   `yaml:"logLevel"`
-	LogTimeFormat      string                   `yaml:"logTimeFormat"`
-	LogToStdout        string                   `yaml:"logToStdout"`
-	MetricsMaxInMemory int                      `yaml:"metricsMaxInMemory"`
-	CaptureBuffer      int                      `yaml:"captureBuffer"`
-	Store              *Store                   `yaml:"store"`
-	UI                 UIConfig                 `yaml:"ui"`
-	Performance        PerformanceConfig        `yaml:"performance"`
-	GlobalTTL          int                      `yaml:"globalTTL"`
-	UnloadTimeout      int                      `yaml:"unloadTimeout"`
-	Models             map[string]ModelConfig   `yaml:"models"`
-	Profiles           map[string]ProfileConfig `yaml:"profiles"`
-	Routing            RoutingConfig            `yaml:"routing"`
-	Groups             map[string]GroupConfig   `yaml:"groups"`
-	Matrix             *MatrixConfig            `yaml:"matrix"`
-	Macros             MacroList                `yaml:"macros"`
-	aliases            map[string]string
-	StartPort          int                      `yaml:"startPort"`
-	Hooks              HooksConfig              `yaml:"hooks"`
-	SendLoadingState   bool                     `yaml:"sendLoadingState"`
-	IncludeAliasesInList bool                   `yaml:"includeAliasesInList"`
-	RequiredAPIKeys    []string                 `yaml:"apiKeys"`
-	Peers              PeerDictionaryConfig     `yaml:"peers"`
-	Upstream           UpstreamConfig           `yaml:"upstream"`
-	// AstMatrix configures the AST Matrix cloud router.
-	// When enabled, cloud model requests are routed through the matrix
-	// to remote providers (openrouter, nvidia, groq, google, etc.).
+	HealthCheckTimeout   int                       `yaml:"healthCheckTimeout"`
+	LogRequests          bool                      `yaml:"logRequests"`
+	LogLevel             string                    `yaml:"logLevel"`
+	LogTimeFormat        string                    `yaml:"logTimeFormat"`
+	LogToStdout          string                    `yaml:"logToStdout"`
+	MetricsMaxInMemory   int                       `yaml:"metricsMaxInMemory"`
+	CaptureBuffer        int                       `yaml:"captureBuffer"`
+	Store                *Store                    `yaml:"store"`
+	UI                   UIConfig                  `yaml:"ui"`
+	Performance          PerformanceConfig         `yaml:"performance"`
+	GlobalTTL            int                       `yaml:"globalTTL"`
+	UnloadTimeout        int                       `yaml:"unloadTimeout"`
+	Models               map[string]ModelConfig    `yaml:"models"`
+	Profiles             map[string]ProfileConfig  `yaml:"profiles"`
+	Selectors            map[string]SelectorConfig `yaml:"selectors"`
+	aliases              map[string]string
+	StartPort            int                  `yaml:"startPort"`
+	Hooks                HooksConfig          `yaml:"hooks"`
+	SendLoadingState     bool                 `yaml:"sendLoadingState"`
+	IncludeAliasesInList bool                 `yaml:"includeAliasesInList"`
+	RequiredAPIKeys      []string             `yaml:"apiKeys"`
+	Peers                PeerDictionaryConfig `yaml:"peers"`
+	Upstream             UpstreamConfig       `yaml:"upstream"`
+	// AstMatrix configures the AST Matrix cloud router (Sovereign extension - autonomous first-class).
+	// When enabled, cloud model requests are routed through the matrix to remote providers.
 	AstMatrix *AstMatrixConfig `yaml:"astMatrix"`
+
+	// routing is the canonical source for swap/scheduling configuration.
+	// New code must read Routing, never the backwards-compat fields below.
+	Routing RoutingConfig `yaml:"routing"`
+
+	// Groups and Matrix are permanent backwards-compat input fields for the
+	// legacy top-level `groups:`/`matrix:` keys. They are normalized into
+	// Routing by LoadConfigFromReader. New code must not read them directly.
+	Groups map[string]GroupConfig `yaml:"groups"` /* key is group ID */
+	Matrix *MatrixConfig          `yaml:"matrix"`
+	Macros MacroList              `yaml:"macros"`
 }
 
 type RoutingConfig struct {
@@ -243,12 +271,8 @@ func (c *Config) ResolveBaseModel(search string) (string, bool) {
 	if realName, found := c.RealModelName(search); found {
 		return realName, true
 	}
-	for _, peer := range c.Peers {
-		for _, modelID := range peer.Models {
-			if modelID == search {
-				return search, true
-			}
-		}
+	if _, _, found := c.ResolvePeerModel(search); found {
+		return search, true
 	}
 	return "", false
 }

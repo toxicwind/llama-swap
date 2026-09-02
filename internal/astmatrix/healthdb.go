@@ -35,8 +35,8 @@ func NewHealthDB(path string) (*HealthDB, error) {
 }
 
 func (h *HealthDB) migrate() error {
- statements := []string{
- 	`CREATE TABLE IF NOT EXISTS requests (
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS requests (
  		id INTEGER PRIMARY KEY AUTOINCREMENT,
  		ts REAL NOT NULL,
  		provider TEXT NOT NULL,
@@ -47,10 +47,10 @@ func (h *HealthDB) migrate() error {
  		winner INTEGER NOT NULL DEFAULT 0,
  		session_id TEXT NOT NULL DEFAULT ''
  	)`,
- 	`CREATE INDEX IF NOT EXISTS idx_req_prov_model ON requests(provider, model)`,
- 	`CREATE INDEX IF NOT EXISTS idx_req_ts ON requests(ts)`,
+		`CREATE INDEX IF NOT EXISTS idx_req_prov_model ON requests(provider, model)`,
+		`CREATE INDEX IF NOT EXISTS idx_req_ts ON requests(ts)`,
 
- 	`CREATE TABLE IF NOT EXISTS model_health (
+		`CREATE TABLE IF NOT EXISTS model_health (
  		provider TEXT NOT NULL,
  		model TEXT NOT NULL,
  		window_start REAL NOT NULL,
@@ -63,7 +63,7 @@ func (h *HealthDB) migrate() error {
  		PRIMARY KEY (provider, model, window_start)
  	)`,
 
- 	`CREATE TABLE IF NOT EXISTS healing_events (
+		`CREATE TABLE IF NOT EXISTS healing_events (
  		id INTEGER PRIMARY KEY AUTOINCREMENT,
  		ts REAL NOT NULL,
  		provider TEXT NOT NULL,
@@ -74,7 +74,7 @@ func (h *HealthDB) migrate() error {
  		details TEXT NOT NULL DEFAULT ''
  	)`,
 
- 	`CREATE TABLE IF NOT EXISTS rate_limit_events (
+		`CREATE TABLE IF NOT EXISTS rate_limit_events (
  		id INTEGER PRIMARY KEY AUTOINCREMENT,
  		ts REAL NOT NULL,
  		provider TEXT NOT NULL,
@@ -83,13 +83,13 @@ func (h *HealthDB) migrate() error {
  		retry_after REAL DEFAULT NULL
  	)`,
 
- 	`CREATE TABLE IF NOT EXISTS session_affinity (
+		`CREATE TABLE IF NOT EXISTS session_affinity (
  		session_id TEXT PRIMARY KEY,
  		provider TEXT NOT NULL,
  		model TEXT NOT NULL,
  		updated_at REAL NOT NULL
  	)`,
- }
+	}
 	for _, stmt := range statements {
 		if _, err := h.db.Exec(stmt); err != nil {
 			return fmt.Errorf("migrate exec: %w", err)

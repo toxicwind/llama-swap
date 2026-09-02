@@ -17,15 +17,15 @@ import (
 // It ignores the "not anonymous" gate by injecting a dummy Bearer when no key is configured.
 // Falls back to https://text.pollinations.ai when gen returns 401/429.
 type PollinationsProvider struct {
-	base           string
-	textBase       string
-	apiKey         string
-	proxy          *httputil.ReverseProxy
-	textProxy      *httputil.ReverseProxy
-	models         []string
-	modelSet       map[string]struct{}
-	limiter        RateLimiter
-	cache          Cache
+	base      string
+	textBase  string
+	apiKey    string
+	proxy     *httputil.ReverseProxy
+	textProxy *httputil.ReverseProxy
+	models    []string
+	modelSet  map[string]struct{}
+	limiter   RateLimiter
+	cache     Cache
 }
 
 func NewPollinationsProvider(limiter RateLimiter, cache Cache) *PollinationsProvider {
@@ -101,8 +101,8 @@ func NewPollinationsProvider(limiter RateLimiter, cache Cache) *PollinationsProv
 	return p
 }
 
-func (p *PollinationsProvider) ID() string      { return "pollinations-free" }
-func (p *PollinationsProvider) BaseURL() string { return p.base }
+func (p *PollinationsProvider) ID() string       { return "pollinations-free" }
+func (p *PollinationsProvider) BaseURL() string  { return p.base }
 func (p *PollinationsProvider) Models() []string { return p.models }
 func (p *PollinationsProvider) Handles(model string) bool {
 	_, ok := p.modelSet[model]

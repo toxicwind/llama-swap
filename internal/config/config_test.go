@@ -298,6 +298,14 @@ macros:
 			expectedError: "macro name 'MODEL_ID' is reserved",
 		},
 		{
+			name: "global macro named PID",
+			config: `
+macros:
+  PID: 1234
+`,
+			expectedError: "macro name 'PID' is reserved",
+		},
+		{
 			name: "model macro named PORT",
 			config: `
 models:
@@ -1717,7 +1725,7 @@ matrix:
 	require.NoError(t, err)
 	assert.Equal(t, "matrix", cfg.Routing.Router.Use)
 	require.NotNil(t, cfg.Routing.Router.Settings.Matrix)
-	assert.Len(t, cfg.Routing.Router.Settings.Matrix.ExpandedSets, 2)
+	assert.NotNil(t, cfg.Routing.Router.Settings.Matrix.Program())
 }
 
 func TestConfig_Routing_RouterUseMatrix(t *testing.T) {
@@ -1737,7 +1745,7 @@ routing:
 	require.NoError(t, err)
 	assert.Equal(t, "matrix", cfg.Routing.Router.Use)
 	require.NotNil(t, cfg.Routing.Router.Settings.Matrix)
-	assert.Len(t, cfg.Routing.Router.Settings.Matrix.ExpandedSets, 2)
+	assert.NotNil(t, cfg.Routing.Router.Settings.Matrix.Program())
 }
 
 func TestConfig_Routing_RouterUseGroup(t *testing.T) {

@@ -17,15 +17,15 @@ import (
 
 // TestModelEvents_EndToEnd exercises the full /models/sse chain the way Zed's
 // llama.cpp provider consumes it:
-//   1. Start a real Server with a stub local router (no New(), so we wire the
-//      broadcaster + watcher exactly as New() does).
-//   2. A client subscribes to GET /models/sse (SSE, Accept: text/event-stream).
-//   3. Simulate an on-demand model LOAD by mutating the router's running set,
-//      which the watchModelState goroutine must detect and broadcast.
-//   4. Simulate an UNLOAD the same way.
-//   5. Assert the exact ModelEvent envelope arrives for each transition, and
-//      that no duplicate is emitted for an unchanged state (Zed re-discovery
-//      must not be spammed).
+//  1. Start a real Server with a stub local router (no New(), so we wire the
+//     broadcaster + watcher exactly as New() does).
+//  2. A client subscribes to GET /models/sse (SSE, Accept: text/event-stream).
+//  3. Simulate an on-demand model LOAD by mutating the router's running set,
+//     which the watchModelState goroutine must detect and broadcast.
+//  4. Simulate an UNLOAD the same way.
+//  5. Assert the exact ModelEvent envelope arrives for each transition, and
+//     that no duplicate is emitted for an unchanged state (Zed re-discovery
+//     must not be spammed).
 func TestModelEvents_EndToEnd(t *testing.T) {
 	stub := &stubRouter{
 		models:  map[string]bool{"m1": true},

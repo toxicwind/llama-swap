@@ -11,7 +11,7 @@ import (
 
 	"github.com/mostlygeek/llama-swap/internal/config"
 	"github.com/mostlygeek/llama-swap/internal/logmon"
-	"github.com/mostlygeek/llama-swap/internal/shared"
+	"github.com/mostlygeek/llama-swap/internal/swaputil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -94,10 +94,10 @@ func TestServer_ProfileAPI(t *testing.T) {
 func TestServer_ProfileMiddleware_JSONAndFilters(t *testing.T) {
 	cfg := profileTestConfig(t)
 	local := newStubRouter([]string{"real", "hidden"}, "")
-	var received shared.ReqContextData
+	var received swaputil.ReqContextData
 	var body []byte
 	local.serveHTTP = func(w http.ResponseWriter, r *http.Request) {
-		received, _ = shared.ReadContext(r.Context())
+		received, _ = swaputil.ReadContext(r.Context())
 		body, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"ok":true}`))
@@ -133,7 +133,7 @@ func TestServer_Profile_UpstreamPreservesBody(t *testing.T) {
 	local.serveHTTP = func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		gotBody = string(body)
-		data, _ := shared.ReadContext(r.Context())
+		data, _ := swaputil.ReadContext(r.Context())
 		gotModel = data.ModelID
 		w.WriteHeader(http.StatusOK)
 	}
@@ -190,7 +190,7 @@ func TestServer_ProfileMiddleware_RewriteUpstreamPath(t *testing.T) {
 			model, replacement, found := upstreamProfilePin(tc.path, tc.pins)
 			if found {
 				var err error
-				req, err = shared.ReplaceRequestModel(req, model, replacement)
+				req, err = swaputil.ReplaceRequestModel(req, model, replacement)
 				require.NoError(t, err)
 			}
 			assert.Equal(t, tc.want, req.PathValue("upstreamPath"))
@@ -239,18 +239,22 @@ func TestServer_Profile_ModelListings(t *testing.T) {
 		Data []modelRecord `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-	names := make(map[string]string)
+	records := make(map[string]modelRecord)
 	for _, record := range response.Data {
-		names[record.ID] = record.Name
+		records[record.ID] = record
 	}
-	assert.Contains(t, names, "public")
-	assert.Empty(t, names["public"])
-	assert.Equal(t, "Real Model", names["real"])
-	assert.Equal(t, "remote: remote-model", names["remote-model"])
-	assert.Contains(t, names, "expose")
-	assert.Empty(t, names["expose"])
-	assert.NotContains(t, names, "disabled")
-	assert.NotContains(t, names, "hidden")
+	assert.Contains(t, records, "public")
+	assert.Empty(t, records["public"].Name)
+	assert.Equal(t, "Real Model", records["real"].Name)
+	assert.Equal(t, "remote: remote-model", records["remote/remote-model"].Name)
+	assert.Contains(t, records, "expose")
+	assert.Empty(t, records["expose"].Name)
+	assert.NotContains(t, records, "disabled")
+	assert.NotContains(t, records, "hidden")
+	require.Contains(t, records["public"].Meta, "llamaswap")
+	metadata, ok := records["public"].Meta["llamaswap"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "profile", metadata["type"])
 
 	status := s.modelStatus()
 	byID := make(map[string]apiModel)
@@ -259,7 +263,7 @@ func TestServer_Profile_ModelListings(t *testing.T) {
 	}
 	assert.Contains(t, byID, "real")
 	assert.Contains(t, byID, "hidden")
-	assert.Equal(t, "remote", byID["remote-model"].PeerID)
+	assert.Equal(t, "remote", byID["remote/remote-model"].PeerID)
 	assert.NotContains(t, byID, "public")
 	assert.NotContains(t, byID, "expose")
 	assert.NotContains(t, byID, "disabled")

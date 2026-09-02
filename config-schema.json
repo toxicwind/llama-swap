@@ -32,13 +32,14 @@
                 "pattern": "^[a-zA-Z0-9_-]+$",
                 "not": {
                     "enum": [
+                        "PID",
                         "PORT",
                         "MODEL_ID"
                     ]
                 }
             },
             "default": {},
-            "description": "A dictionary of string substitutions. Macros are reusable snippets used in model cmd, cmdStop, proxy, checkEndpoint, filters.stripParams. Macro names must be <64 chars, match ^[a-zA-Z0-9_-]+$, and not be PORT or MODEL_ID. Values can be string, number, or boolean. Macros can reference other macros defined before them."
+            "description": "A dictionary of string substitutions. Global macros can be used in any configuration value; model macros are scoped to their model. Macro names must be <64 chars, match ^[a-zA-Z0-9_-]+$, and not be PID, PORT, or MODEL_ID. Values can be string, number, or boolean. Macros can reference other macros defined before them."
         },
         "timeouts": {
             "type": "object",
@@ -320,7 +321,7 @@
                     "pins": {
                         "type": "object",
                         "minProperties": 1,
-                        "description": "Model IDs to rewrite while this profile is active. An empty string or null disables the model ID.",
+                        "description": "Model IDs to rewrite while this profile is active. Targets may be concrete models, aliases, peer models, or selector IDs. An empty string or null disables the model ID.",
                         "propertyNames": {
                             "type": "string",
                             "minLength": 1
@@ -335,6 +336,79 @@
                                 }
                             ]
                         }
+                    }
+                },
+                "additionalProperties": false
+            }
+        },
+        "selectors": {
+            "type": "object",
+            "default": {},
+            "description": "Virtual model IDs that select a concrete target for each request. Selectors run after profiles and are not supported on /upstream paths.",
+            "propertyNames": {
+                "type": "string",
+                "minLength": 1
+            },
+            "additionalProperties": {
+                "type": "object",
+                "required": [
+                    "strategy",
+                    "targets"
+                ],
+                "properties": {
+                    "strategy": {
+                        "type": "string",
+                        "enum": [
+                            "warm",
+                            "pin",
+                            "spillover"
+                        ],
+                        "description": "How a target is selected for each request."
+                    },
+                    "targets": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "description": "Ordered target model IDs or aliases. Selector IDs cannot be targets."
+                    },
+                    "settings": {
+                        "type": "object",
+                        "properties": {
+                            "spillover": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "default": 1,
+                                "description": "Requests reserved per active target before spilling over to the next target."
+                            }
+                        },
+                        "additionalProperties": false,
+                        "default": {}
+                    },
+                    "name": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 128,
+                        "description": "Display name used in the /v1/models response."
+                    },
+                    "description": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 1024,
+                        "description": "Description used in the /v1/models response."
+                    },
+                    "unlisted": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Hide this selector from /v1/models while keeping it requestable."
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "default": {},
+                        "description": "Arbitrary selector metadata included in /v1/models."
                     }
                 },
                 "additionalProperties": false
@@ -474,6 +548,19 @@
                     "timeouts": {
                         "$ref": "#/definitions/timeouts"
                     },
+                    "compat": {
+                        "type": "object",
+                        "properties": {
+                            "ignoreWebsockets": {
+                                "type": "boolean",
+                                "default": false,
+                                "description": "Do not let websocket connections load a stopped model or count toward concurrency, TTL activity, swap decisions, selector load, or in-flight activity."
+                            }
+                        },
+                        "additionalProperties": false,
+                        "default": {},
+                        "description": "Compatibility settings for upstream applications."
+                    },
                     "capabilities": {
                         "type": "object",
                         "properties": {
@@ -487,7 +574,8 @@
                                     "enum": [
                                         "text",
                                         "audio",
-                                        "image"
+                                        "image",
+                                        "video"
                                     ]
                                 },
                                 "description": "List of input modalities understood by the model."
@@ -502,7 +590,8 @@
                                     "enum": [
                                         "text",
                                         "audio",
-                                        "image"
+                                        "image",
+                                        "video"
                                     ]
                                 },
                                 "description": "List of output modalities generated by the model."
@@ -549,10 +638,15 @@
                             },
                             "default": [],
                             "description": "List of model IDs to load on startup. Model names must match keys in models. When preloading multiple models, define a group to prevent swapping."
+                        },
+                        "profile": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Profile to activate on startup and after a configuration reload. Must name a key under profiles. An empty value starts with no profile active."
                         }
                     },
                     "additionalProperties": false,
-                    "description": "Actions to perform on startup. Only supported action is preload."
+                    "description": "Actions to perform on startup."
                 }
             },
             "additionalProperties": false,

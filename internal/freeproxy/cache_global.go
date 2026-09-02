@@ -13,9 +13,9 @@ import (
 // It persists across builds/restarts and is the default for home/toxic.
 // Falls back to memory if HOME/.cache is not writable. Ponytail: no redis, no extra dep.
 type globalCache struct {
-	mu   sync.Mutex
-	dir  string
-	mem  *memoryCache // fallback + fast path
+	mu  sync.Mutex
+	dir string
+	mem *memoryCache // fallback + fast path
 }
 
 func homeCacheDir() string {

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,14 +18,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mostlygeek/llama-swap/docs"
 	"github.com/mostlygeek/llama-swap/internal/config"
+	"github.com/mostlygeek/llama-swap/internal/docagent"
 	"github.com/mostlygeek/llama-swap/internal/event"
+	"github.com/mostlygeek/llama-swap/internal/hw"
 	"github.com/mostlygeek/llama-swap/internal/logmon"
 	"github.com/mostlygeek/llama-swap/internal/perf"
 	"github.com/mostlygeek/llama-swap/internal/process"
 	"github.com/mostlygeek/llama-swap/internal/server"
-	"github.com/mostlygeek/llama-swap/internal/shared"
 	"github.com/mostlygeek/llama-swap/internal/store"
+	"github.com/mostlygeek/llama-swap/internal/swaputil"
 	"github.com/mostlygeek/llama-swap/internal/watcher"
 )
 
@@ -34,6 +39,12 @@ var (
 )
 
 const shutdownTimeout = 30 * time.Second
+
+// docsConfigSchema stays at the repository root because it is the public
+// schema URL and is also used by deployment tooling.
+//
+//go:embed config-schema.json
+var docsConfigSchema []byte
 
 // logTimeFormats maps the cfg.LogTimeFormat value to a Go time layout. An
 // unset or unrecognised value yields "" — no timestamp prefix.
@@ -62,6 +73,20 @@ func configStorePath(cfg config.Config) string {
 	return strings.TrimSpace(cfg.Store.Path)
 }
 
+// runValidate loads the configuration from the given sources and prints a
+// short human-readable result to out. It returns 0 when the config loads
+// without error and 1 otherwise. It does not start the server, detect
+// hardware, or open a listener.
+func runValidate(configPath, configDir string, out io.Writer) int {
+	cfg, err := config.LoadConfigSources(configPath, configDir)
+	if err != nil {
+		fmt.Fprintf(out, "config validation failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(out, "config is valid: %d model(s), %d peer(s)\n", len(cfg.Models), len(cfg.Peers))
+	return 0
+}
+
 func main() {
 	flagConfig := flag.String("config", "", "path to config file")
 	flagConfigDir := flag.String("config-dir", "", "directory of *.yml/*.yaml config files (additive to -config)")
@@ -70,6 +95,7 @@ func main() {
 	flagKeyFile := flag.String("tls-key-file", "", "TLS key file")
 	flagVersion := flag.Bool("version", false, "show version and exit")
 	flagWatchConfig := flag.Bool("watch-config", false, "reload config on file change")
+	flagValidate := flag.Bool("validate", false, "validate the config file and exit (without starting the server)")
 	flag.Parse()
 
 	if *flagVersion {
@@ -80,6 +106,11 @@ func main() {
 	if *flagConfig == "" && *flagConfigDir == "" {
 		slog.Error("at least one of -config or -config-dir must be provided")
 		os.Exit(1)
+	}
+
+	if *flagValidate {
+		code := runValidate(*flagConfig, *flagConfigDir, os.Stdout)
+		os.Exit(code)
 	}
 
 	useTLS := *flagCertFile != "" || *flagKeyFile != ""
@@ -128,6 +159,19 @@ func main() {
 	applyLogSettings(cfg)
 	proxyLog.Debugf("PID: %d", os.Getpid())
 
+	// Hardware describes the inference host and remains stable for the life of
+	// this process, including config reloads. Detection is best effort so an
+	// unavailable platform probe never prevents llama-swap from starting.
+	var hardwareSnapshot *hw.HardwareSnapshot
+	detectCtx, detectCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	detectedHardware, detectErr := hw.Detect(detectCtx, version)
+	detectCancel()
+	if detectErr != nil {
+		proxyLog.Warnf("hardware detection unavailable: %v", detectErr)
+	} else {
+		hardwareSnapshot = &detectedHardware
+	}
+
 	// On Windows, bind the process tree to a Job Object so every upstream
 	// process is reaped when llama-swap exits — even on a forced kill. No-op
 	// elsewhere. Non-fatal: a failure just falls back to per-process teardown.
@@ -150,6 +194,11 @@ func main() {
 
 	buildInfo := server.BuildInfo{Version: version, Commit: commit, Date: date}
 
+	// Indexed once and shared by every Server instance, including the ones a
+	// hot config reload creates: the documentation is immutable and does not
+	// depend on cfg.
+	referenceDocs := docagent.NewWithSchema(docs.Files, docsConfigSchema)
+
 	initialStorePath := configStorePath(cfg)
 	initialStore, err := store.New(initialStorePath)
 	if err != nil {
@@ -157,7 +206,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	initialSrv, err := server.New(cfg, muxLog, proxyLog, upstreamLog, perfMon, initialStore, buildInfo)
+	initialSrv, err := server.New(cfg, muxLog, proxyLog, upstreamLog, perfMon, initialStore, buildInfo, hardwareSnapshot, referenceDocs)
 	if err != nil {
 		slog.Error("failed to create server", "error", err)
 		initialStore.Close()
@@ -227,7 +276,7 @@ func main() {
 			}
 		}
 
-		newSrv, err := server.New(newCfg, muxLog, proxyLog, upstreamLog, perfMon, newStore, buildInfo)
+		newSrv, err := server.New(newCfg, muxLog, proxyLog, upstreamLog, perfMon, newStore, buildInfo, hardwareSnapshot, referenceDocs)
 		if err != nil {
 			proxyLog.Warnf("failed to build new server during reload: %v", err)
 			if storeChanged {
@@ -257,7 +306,7 @@ func main() {
 
 		// Notify UI after a short delay so it can refresh model state.
 		time.AfterFunc(3*time.Second, func() {
-			event.Emit(shared.ConfigFileChangedEvent{State: shared.ReloadingStateEnd})
+			event.Emit(swaputil.ConfigFileChangedEvent{State: swaputil.ReloadingStateEnd})
 		})
 
 		proxyLog.Info("configuration reloaded")
@@ -318,7 +367,7 @@ func main() {
 		}
 	}()
 
-	if !shared.IsLoopbackAddr(listenAddr) {
+	if !swaputil.IsLoopbackAddr(listenAddr) {
 		_, port, _ := net.SplitHostPort(listenAddr)
 		proxyLog.Infof("llama-swap is reachable by all hosts on the network, use -listen localhost:%s to restrict to loopback only", port)
 	}

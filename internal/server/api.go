@@ -11,7 +11,7 @@ import (
 	"github.com/mostlygeek/llama-swap/internal/config"
 	"github.com/mostlygeek/llama-swap/internal/event"
 	"github.com/mostlygeek/llama-swap/internal/process"
-	"github.com/mostlygeek/llama-swap/internal/shared"
+	"github.com/mostlygeek/llama-swap/internal/swaputil"
 )
 
 // modelRecord is one entry in the OpenAI-compatible /v1/models listing.
@@ -26,6 +26,7 @@ type modelRecord struct {
 	Capabilities        map[string]any `json:"capabilities,omitempty"`
 	SupportedParameters []string       `json:"supported_parameters,omitempty"`
 	ContextLength       int            `json:"context_length,omitempty"`
+	ContextWindow       int            `json:"context_window,omitempty"`
 	Meta                map[string]any `json:"meta,omitempty"`
 	Status              map[string]any `json:"status"`
 }
@@ -38,6 +39,7 @@ var cappedMetadataKeys = map[string]struct{}{
 	"capabilities":         {},
 	"supported_parameters": {},
 	"context_length":       {},
+	"context_window":       {},
 }
 
 // renderCapabilities converts a model's capabilities config into additional
@@ -135,7 +137,7 @@ func filterCappedMetadata(md map[string]any) map[string]any {
 // (with optional aliases) plus peer models.
 func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	created := time.Now().Unix()
-	data := make([]modelRecord, 0, len(s.cfg.Models))
+	data := make([]modelRecord, 0, len(s.cfg.Models)+len(s.cfg.Selectors))
 	running := s.local.RunningModels()
 	modelIDs := make(map[string]struct{})
 
@@ -146,7 +148,13 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		return "unloaded"
 	}
 
-	newRecord := func(id, name, description string, metadata map[string]any, caps config.ModelCapConfig, status string) modelRecord {
+	newRecord := func(
+		id, name, description string,
+		metadata map[string]any,
+		caps config.ModelCapConfig,
+		status string,
+		internalMetadata map[string]any,
+	) modelRecord {
 		rec := modelRecord{
 			ID:          id,
 			Object:      "model",
@@ -157,11 +165,27 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			Status:      map[string]any{"value": status},
 		}
 		rec.Architecture, rec.Capabilities, rec.SupportedParameters, rec.ContextLength = renderCapabilities(caps)
+		// context_window mirrors context_length for OpenAI-compatible gateways
+		// (e.g. Bifrost) that read the context size from this field name.
+		rec.ContextWindow = rec.ContextLength
 		if !caps.Empty() {
 			metadata = filterCappedMetadata(metadata)
 		}
-		if len(metadata) > 0 {
-			rec.Meta = map[string]any{"llamaswap": metadata}
+		llamaSwapMetadata := make(map[string]any, len(metadata)+len(internalMetadata))
+		for key, value := range metadata {
+			llamaSwapMetadata[key] = value
+		}
+		for key, value := range internalMetadata {
+			llamaSwapMetadata[key] = value
+		}
+		if len(llamaSwapMetadata) > 0 || rec.ContextLength > 0 {
+			rec.Meta = make(map[string]any)
+			if len(llamaSwapMetadata) > 0 {
+				rec.Meta["llamaswap"] = llamaSwapMetadata
+			}
+			if rec.ContextLength > 0 {
+				rec.Meta["n_ctx"] = rec.ContextLength
+			}
 		}
 		return rec
 	}
@@ -176,12 +200,24 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		status := modelStatus(id)
-		data = append(data, newRecord(id, mc.Name, mc.Description, mc.Metadata, mc.Capabilities, status))
+		internalMetadata := map[string]any{"type": "model"}
+		if len(mc.Aliases) > 0 {
+			internalMetadata["aliases"] = mc.Aliases
+		}
+		data = append(data, newRecord(id, mc.Name, mc.Description, mc.Metadata, mc.Capabilities, status, internalMetadata))
 
 		if s.cfg.IncludeAliasesInList {
 			for _, alias := range mc.Aliases {
 				if alias := strings.TrimSpace(alias); alias != "" {
-					data = append(data, newRecord(alias, mc.Name, mc.Description, mc.Metadata, mc.Capabilities, status))
+					data = append(data, newRecord(
+						alias,
+						mc.Name,
+						mc.Description,
+						mc.Metadata,
+						mc.Capabilities,
+						status,
+						map[string]any{"type": "alias", "modelID": id},
+					))
 				}
 			}
 		}
@@ -189,9 +225,59 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 
 	for peerID, peer := range s.cfg.Peers {
 		for _, modelID := range peer.Models {
-			modelIDs[modelID] = struct{}{}
-			data = append(data, newRecord(modelID, peerID+": "+modelID, "", map[string]any{"peerID": peerID}, config.ModelCapConfig{}, "unloaded"))
+			fqn := config.PeerModelFQN(peerID, modelID)
+			modelIDs[fqn] = struct{}{}
+			if resolvedPeer, resolvedModel, found := s.cfg.ResolvePeerModel(modelID); found &&
+				resolvedPeer == peerID && resolvedModel == modelID {
+				modelIDs[modelID] = struct{}{}
+			}
+			data = append(data, newRecord(
+				fqn,
+				peerID+": "+modelID,
+				"",
+				nil,
+				config.ModelCapConfig{},
+				"unloaded",
+				map[string]any{"type": "peer", "peerID": peerID},
+			))
 		}
+	}
+
+	for selectorID, selector := range s.cfg.Selectors {
+		modelIDs[selectorID] = struct{}{}
+		if selector.Unlisted {
+			continue
+		}
+		status := "unloaded"
+		for _, target := range selector.Targets {
+			modelID, local := s.cfg.RealModelName(target)
+			if local {
+				state := running[modelID]
+				if state == process.StateReady || state == process.StateStarting {
+					status = "loaded"
+				}
+			}
+			if selector.Strategy == config.SelectorStrategyPin || status == "loaded" {
+				break
+			}
+		}
+		internalMetadata := map[string]any{
+			"type":     "selector",
+			"strategy": selector.Strategy,
+			"targets":  selector.Targets,
+		}
+		if selector.Strategy == config.SelectorStrategySpillover {
+			internalMetadata["spillover"] = selector.Settings.Spillover
+		}
+		data = append(data, newRecord(
+			selectorID,
+			selector.Name,
+			selector.Description,
+			selector.Metadata,
+			config.ModelCapConfig{},
+			status,
+			internalMetadata,
+		))
 	}
 
 	if profile, ok := s.cfg.Profiles[s.ActiveProfile()]; ok {
@@ -202,7 +288,15 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 			if _, shadowsModel := modelIDs[pin]; shadowsModel {
 				continue
 			}
-			data = append(data, newRecord(pin, "", "", nil, config.ModelCapConfig{}, "unloaded"))
+			data = append(data, newRecord(
+				pin,
+				"",
+				"",
+				nil,
+				config.ModelCapConfig{},
+				"unloaded",
+				map[string]any{"type": "profile"},
+			))
 		}
 	}
 
@@ -305,7 +399,7 @@ func (s *Server) startPreload() {
 			if err != nil {
 				continue
 			}
-			req = req.WithContext(shared.SetContext(req.Context(), shared.ReqContextData{Model: modelID, ModelID: modelID, Metadata: make(map[string]string)}))
+			req = req.WithContext(swaputil.SetContext(req.Context(), swaputil.ReqContextData{Model: modelID, ModelID: modelID, Metadata: make(map[string]string)}))
 
 			dw := &discardResponseWriter{status: http.StatusOK}
 			s.local.ServeHTTP(dw, req)
@@ -314,7 +408,7 @@ func (s *Server) startPreload() {
 			if !success {
 				s.proxylog.Errorf("failed to preload model %s: status %d", modelID, dw.status)
 			}
-			event.Emit(shared.ModelPreloadedEvent{ModelName: modelID, Success: success})
+			event.Emit(swaputil.ModelPreloadedEvent{ModelName: modelID, Success: success})
 		}
 	}()
 }
@@ -343,14 +437,63 @@ func handleUpstreamRedirect(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/ui/models", http.StatusFound)
 }
 
+func handleComfyUIRedirect(w http.ResponseWriter, r *http.Request) {
+	location := "/comfyui/"
+	if r.URL.RawQuery != "" {
+		location += "?" + r.URL.RawQuery
+	}
+	status := http.StatusPermanentRedirect
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		status = http.StatusMovedPermanently
+	}
+	http.Redirect(w, r, location, status)
+}
+
+// handleComfyUI proxies requests under /comfyui/ to the fixed local
+// ComfyUI model. Its compatibility settings are applied while loading config.
+func (s *Server) handleComfyUI(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.cfg.Models[config.ComfyUIModelID]; !ok || !s.local.Handles(config.ComfyUIModelID) {
+		swaputil.SendResponse(w, r, http.StatusNotFound, "local model "+config.ComfyUIModelID+" not found")
+		return
+	}
+
+	// Strip the /comfyui prefix before forwarding. URL.Path and PathValue are
+	// decoded, so retain the matching escaped suffix in RawPath exactly as the
+	// generic /upstream handler does.
+	remainingPath := "/" + strings.TrimPrefix(r.PathValue("comfyPath"), "/")
+	escapedRemaining := swaputil.EscapedPathSuffix(r.URL.EscapedPath(), "/comfyui")
+	r.URL.Path = remainingPath
+	r.URL.RawPath = escapedRemaining
+
+	// Only an explicit request for the ComfyUI root may start the model. Once
+	// it is unloaded, stale browser requests for assets, APIs, or websockets
+	// must not cause it to be loaded again.
+	if remainingPath != "/" {
+		state, ok := s.local.RunningModels()[config.ComfyUIModelID]
+		if !ok || state != process.StateReady {
+			swaputil.SendResponse(w, r, http.StatusConflict,
+				"model "+config.ComfyUIModelID+" is not loaded; only /comfyui/ can start it")
+			return
+		}
+	}
+
+	*r = *r.WithContext(swaputil.SetContext(r.Context(), swaputil.ReqContextData{
+		ApiKey:   swaputil.ExtractAPIKey(r),
+		Model:    config.ComfyUIModelID,
+		ModelID:  config.ComfyUIModelID,
+		Metadata: make(map[string]string),
+	}))
+	s.local.ServeHTTP(w, r)
+}
+
 // handleUpstream proxies ANY request under /upstream/<model>/<path> directly to
 // the model's process, bypassing model dispatch by body/query inspection.
 func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	upstreamPath := r.PathValue("upstreamPath")
 
-	searchName, modelID, remainingPath, found := shared.FindModelInPath(s.cfg, "/"+upstreamPath)
+	searchName, modelID, remainingPath, found := swaputil.FindModelInPath(s.cfg, "/"+upstreamPath)
 	if !found {
-		shared.SendResponse(w, r, http.StatusNotFound, "model not found")
+		swaputil.SendResponse(w, r, http.StatusNotFound, "model not found")
 		return
 	}
 
@@ -369,10 +512,13 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip the /upstream/<model> prefix before forwarding.
+	// Strip the /upstream/<model> prefix before forwarding. URL.Path is decoded,
+	// so retain the matching escaped suffix in RawPath for the reverse proxy.
+	escapedRemaining := swaputil.EscapedPathSuffix(r.URL.EscapedPath(), "/upstream/"+searchName)
 	r.URL.Path = remainingPath
+	r.URL.RawPath = escapedRemaining
 	// Pin the resolved model so the router skips body/query extraction.
-	*r = *r.WithContext(shared.SetContext(r.Context(), shared.ReqContextData{Model: searchName, ModelID: modelID, Metadata: make(map[string]string)}))
+	*r = *r.WithContext(swaputil.SetContext(r.Context(), swaputil.ReqContextData{Model: searchName, ModelID: modelID, Metadata: make(map[string]string)}))
 
 	// If the path matches an upstream.ignorePaths entry and the model is
 	// not already loaded, refuse the request without triggering a swap. The
@@ -385,7 +531,7 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 		if s.local.Handles(modelID) {
 			state, ok := s.local.RunningModels()[modelID]
 			if !ok || state != process.StateReady {
-				shared.SendResponse(w, r, http.StatusConflict,
+				swaputil.SendResponse(w, r, http.StatusConflict,
 					fmt.Sprintf("model %s is not loaded; path matches upstream.ignorePaths", modelID))
 				return
 			}
@@ -402,6 +548,6 @@ func (s *Server) handleUpstream(w http.ResponseWriter, r *http.Request) {
 	case s.peer.Handles(modelID):
 		s.peer.ServeHTTP(w, r)
 	default:
-		shared.SendResponse(w, r, http.StatusNotFound, "no router for model "+modelID)
+		swaputil.SendResponse(w, r, http.StatusNotFound, "no router for model "+modelID)
 	}
 }

@@ -16,15 +16,15 @@ type PerProviderRateLimiter struct {
 	mu sync.Mutex
 
 	// per-provider state
-	requestTimestamps map[string][]time.Time // rolling window of request timestamps
-	backoffUntil      map[string]time.Time   // provider is prohibited until this time
+	requestTimestamps map[string][]time.Time   // rolling window of request timestamps
+	backoffUntil      map[string]time.Time     // provider is prohibited until this time
 	backoffDuration   map[string]time.Duration // current backoff duration (exponential)
-	rateLimitCount    map[string]int         // consecutive 429 count per provider
+	rateLimitCount    map[string]int           // consecutive 429 count per provider
 
 	// GPU memory pressure (nvidia-smi) — when VRAM is tight, NIM may throttle
-	lastGpuCheck     time.Time
-	gpuFreeMB        int
-	gpuTotalMB       int
+	lastGpuCheck time.Time
+	gpuFreeMB    int
+	gpuTotalMB   int
 
 	// configuration
 	windowDuration time.Duration // rolling window (default: 60s)

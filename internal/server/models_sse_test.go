@@ -81,14 +81,14 @@ type stubLocalRouter struct {
 func (s *stubLocalRouter) RunningModels() map[string]process.ProcessState {
 	return s.running
 }
-func (s *stubLocalRouter) Unload(time.Duration, ...string)       {}
-func (s *stubLocalRouter) StartSwap(string, []string)            {}
+func (s *stubLocalRouter) Unload(time.Duration, ...string)              {}
+func (s *stubLocalRouter) StartSwap(string, []string)                   {}
 func (s *stubLocalRouter) GrantServe(scheduler.HandlerReq, string) bool { return false }
-func (s *stubLocalRouter) GrantError(scheduler.HandlerReq, error)   {}
-func (s *stubLocalRouter) StopProcesses(time.Duration, []string)    {}
-func (s *stubLocalRouter) Shutdown(time.Duration) error         { return nil }
+func (s *stubLocalRouter) GrantError(scheduler.HandlerReq, error)       {}
+func (s *stubLocalRouter) StopProcesses(time.Duration, []string)        {}
+func (s *stubLocalRouter) Shutdown(time.Duration) error                 { return nil }
 func (s *stubLocalRouter) ServeHTTP(http.ResponseWriter, *http.Request) {}
-func (s *stubLocalRouter) Handles(string) bool                     { return true }
+func (s *stubLocalRouter) Handles(string) bool                          { return true }
 func (s *stubLocalRouter) ProcessLogger(string) (*logmon.Monitor, bool) { return nil, false }
 
 func TestModelEvents_HandlerStreams(t *testing.T) {
@@ -96,7 +96,7 @@ func TestModelEvents_HandlerStreams(t *testing.T) {
 	// priming path (instead of the nil-guard skip).
 	stub := &stubLocalRouter{running: map[string]process.ProcessState{"m1": process.StateReady}}
 	s := &Server{
-		local:      stub,
+		local:       stub,
 		modelEvents: newModelEventBroadcaster(logmon.New()),
 	}
 
