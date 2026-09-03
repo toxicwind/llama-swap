@@ -2,36 +2,32 @@ package astmatrix
 
 import (
 	"database/sql"
-	"fmt"
-	"os"
-	"path/filepath"
+	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
-// HealthDB tracks provider health in SQLite WAL mode.
 type HealthDB struct {
-	db *sql.DB
+	mu        sync.RWMutex
+	db        *sql.DB
+	healthy   map[string]bool
+	latencies map[string]time.Duration
+	elos      map[string]int
+	stickies  map[string]string
+	lastProbe map[string]time.Time
 }
 
-// NewHealthDB opens or creates the health database.
-func NewHealthDB(path string) (*HealthDB, error) {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("healthdb mkdir: %w", err)
+func NewHealthDB(path string) *HealthDB {
+	h := &HealthDB{
+		healthy: make(map[string]bool), latencies: make(map[string]time.Duration),
+		elos: make(map[string]int), stickies: make(map[string]string),
+		lastProbe: make(map[string]time.Time),
 	}
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000", path)
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("healthdb open: %w", err)
+	if db, err := sql.Open("sqlite3", path); err == nil {
+		h.db = db; h.initSchema()
 	}
-	h := &HealthDB{db: db}
-	if err := h.migrate(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("healthdb migrate: %w", err)
-	}
-	return h, nil
+	return h
 }
 
 func (h *HealthDB) migrate() error {
@@ -95,130 +91,59 @@ func (h *HealthDB) migrate() error {
 			return fmt.Errorf("migrate exec: %w", err)
 		}
 	}
-	return nil
+}
+
+func (h *HealthDB) RecordLatency(provider string, latency time.Duration) {
+	h.mu.Lock(); defer h.mu.Unlock()
+	old := h.latencies[provider]
+	if old == 0 { h.latencies[provider] = latency } else { h.latencies[provider] = old*7/10 + latency*3/10 }
+	if h.db != nil {
+		h.db.Exec(`INSERT INTO provider_health(provider,latency_ms,last_probe)
+		VALUES(?,?,?) ON CONFLICT(provider) DO UPDATE SET
+			latency_ms=excluded.latency_ms, last_probe=excluded.last_probe`,
+			provider, float64(latency.Milliseconds()), time.Now().Format(time.RFC3339))
+	}
+}
+
+func (h *HealthDB) GetLatency(provider string) time.Duration {
+	h.mu.RLock(); defer h.mu.RUnlock()
+	return h.latencies[provider]
+}
+
+func (h *HealthDB) GetELO(provider string) int {
+	h.mu.RLock(); defer h.mu.RUnlock()
+	if e, ok := h.elos[provider]; ok { return e }
+	return 1500
+}
+
+func (h *HealthDB) SetELO(provider string, elo int) {
+	h.mu.Lock(); defer h.mu.Unlock()
+	h.elos[provider] = elo
+}
+
+func (h *HealthDB) IsHealthy(provider string) bool {
+	h.mu.RLock(); defer h.mu.RUnlock()
+	if _, ok := h.lastProbe[provider]; !ok { return true }
+	return h.healthy[provider]
+}
+
+func (h *HealthDB) SetSticky(session, provider string, ttl time.Duration) {
+	h.mu.Lock(); defer h.mu.Unlock()
+	h.stickies[session] = provider
+	if h.db != nil {
+		h.db.Exec(`INSERT INTO sticky_sessions(session,provider,expires)
+		VALUES(?,?,?) ON CONFLICT(session) DO UPDATE SET
+			provider=excluded.provider, expires=excluded.expires`,
+			session, provider, time.Now().Add(ttl).Format(time.RFC3339))
+	}
+}
+
+func (h *HealthDB) GetSticky(session string) string {
+	h.mu.RLock(); defer h.mu.RUnlock()
+	return h.stickies[session]
 }
 
 func (h *HealthDB) Close() error {
-	return h.db.Close()
-}
-
-// RecordRequest inserts a request record and updates model_health.
-func (h *HealthDB) RecordRequest(provider, model string, status int, latencyMs float64, strategy string, winner int, sessionID string) {
-	now := float64(time.Now().UnixMilli()) / 1000.0
-	window := now - float64(int64(now)%300)
-
-	// Insert request
-	h.db.Exec(`INSERT INTO requests (ts,provider,model,status,latency_ms,strategy,winner,session_id) VALUES (?,?,?,?,?,?,?,?)`,
-		now, provider, model, status, latencyMs, strategy, winner, sessionID)
-
-	if status == 200 {
-		h.db.Exec(`INSERT INTO model_health (provider,model,window_start,successes,failures,total_ms,min_ms,max_ms) VALUES (?,?,?,1,0,?,?,?) ON CONFLICT(provider,model,window_start) DO UPDATE SET successes=successes+1,total_ms=total_ms+excluded.total_ms,min_ms=min(min_ms,excluded.min_ms),max_ms=max(max_ms,excluded.max_ms)`,
-			provider, model, window, latencyMs, latencyMs, latencyMs)
-	} else if status == 429 {
-		h.db.Exec(`INSERT INTO model_health (provider,model,window_start,successes,failures,rate_limited,total_ms,min_ms,max_ms) VALUES (?,?,?,0,0,1,?,?,?) ON CONFLICT(provider,model,window_start) DO UPDATE SET rate_limited=rate_limited+1`,
-			provider, model, window, latencyMs, latencyMs, latencyMs)
-	} else {
-		h.db.Exec(`INSERT INTO model_health (provider,model,window_start,successes,failures,total_ms,min_ms,max_ms) VALUES (?,?,?,0,1,?,?,?) ON CONFLICT(provider,model,window_start) DO UPDATE SET failures=failures+1,total_ms=total_ms+excluded.total_ms,min_ms=min(min_ms,excluded.min_ms),max_ms=max(max_ms,excluded.max_ms)`,
-			provider, model, window, latencyMs, latencyMs, latencyMs)
-	}
-}
-
-// RecordRateLimit logs a rate-limit event.
-func (h *HealthDB) RecordRateLimit(provider, model string, statusCode int) {
-	now := float64(time.Now().UnixMilli()) / 1000.0
-	h.db.Exec(`INSERT INTO rate_limit_events (ts,provider,model,status_code,retry_after) VALUES (?,?,?,?,NULL)`, now, provider, model, statusCode)
-}
-
-// RecordHealing logs a circuit-breaker healing event.
-func (h *HealthDB) RecordHealing(provider, model, event, prevStatus, newStatus, details string) {
-	now := float64(time.Now().UnixMilli()) / 1000.0
-	h.db.Exec(`INSERT INTO healing_events (ts,provider,model,event,prev_status,new_status,details) VALUES (?,?,?,?,?,?,?)`,
-		now, provider, model, event, prevStatus, newStatus, details)
-}
-
-// ProviderSummary returns aggregated health stats for the last 30 minutes.
-type ProviderHealth struct {
-	Successes   int
-	Failures    int
-	SuccessRate float64
-	AvgLatency  float64
-	RateLimited int
-}
-
-func (h *HealthDB) ProviderSummary() map[string]ProviderHealth {
-	cutoff := float64(time.Now().UnixMilli())/1000.0 - 1800.0
-	rows, err := h.db.Query(`
-		SELECT provider,
-		       SUM(successes) AS successes,
-		       SUM(failures) AS failures,
-		       AVG(total_ms / max(successes+failures,1)) AS avg_ms,
-		       SUM(rate_limited) AS rate_limited
-		FROM model_health WHERE window_start>=? GROUP BY provider`, cutoff)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	result := make(map[string]ProviderHealth)
-	for rows.Next() {
-		var p string
-		var successes, failures, rateLimited int
-		var avgMs sql.NullFloat64
-		if err := rows.Scan(&p, &successes, &failures, &avgMs, &rateLimited); err != nil {
-			continue
-		}
-		total := successes + failures
-		h := ProviderHealth{
-			Successes:   successes,
-			Failures:    failures,
-			RateLimited: rateLimited,
-		}
-		if total > 0 {
-			h.SuccessRate = float64(successes) / float64(total)
-		}
-		if avgMs.Valid {
-			h.AvgLatency = avgMs.Float64
-		}
-		result[p] = h
-	}
-	return result
-}
-
-// StickyGet retrieves session affinity, returning (provider, model) or empty.
-func (h *HealthDB) StickyGet(sessionID string, ttl int) (string, string) {
-	cutoff := float64(time.Now().UnixMilli())/1000.0 - float64(ttl)
-	var provider, model string
-	err := h.db.QueryRow(`SELECT provider, model FROM session_affinity WHERE session_id=? AND updated_at>=?`, sessionID, cutoff).Scan(&provider, &model)
-	if err != nil {
-		return "", ""
-	}
-	return provider, model
-}
-
-// StickySet upserts session affinity.
-func (h *HealthDB) StickySet(sessionID, provider, model string) {
-	now := float64(time.Now().UnixMilli()) / 1000.0
-	h.db.Exec(`INSERT INTO session_affinity (session_id,provider,model,updated_at) VALUES (?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET provider=excluded.provider,model=excluded.model,updated_at=excluded.updated_at`,
-		sessionID, provider, model, now)
-}
-
-// DebugAgg returns raw aggregation rows for debugging.
-func (h *HealthDB) DebugAgg() []map[string]interface{} {
-	rows, err := h.db.Query(`SELECT model, provider, status, count(*) as cnt, avg(latency_ms) as avg_ms FROM requests GROUP BY model, provider, status ORDER BY cnt DESC LIMIT 20`)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	var result []map[string]interface{}
-	for rows.Next() {
-		var model, provider string
-		var status, cnt int
-		var avgMs float64
-		if err := rows.Scan(&model, &provider, &status, &cnt, &avgMs); err != nil {
-			continue
-		}
-		result = append(result, map[string]interface{}{
-			"model": model, "provider": provider, "status": status, "count": cnt, "avg_ms": avgMs,
-		})
-	}
-	return result
+	if h.db != nil { return h.db.Close() }
+	return nil
 }

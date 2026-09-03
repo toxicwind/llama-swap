@@ -302,3 +302,86 @@ curl -Ns 'http://host/logs/stream?no-history'
 Any OpenAI compatible server would work. llama-swap was originally designed for llama-server and it is the best supported.
 
 For Python based inference servers like vllm or tabbyAPI it is recommended to run them via podman or docker. This provides clean environment isolation as well as responding correctly to `SIGTERM` signals for proper shutdown.
+
+
+---
+
+## AstMatrix V2 — Production-Grade Cloud Provider Router
+
+AstMatrix provides intelligent routing to cloud LLM providers with production-grade reliability.
+
+### Features
+
+- **8 Routing Strategies**: hybrid, ast_race, sticky_affinity, weighted_elo, least_latency, round_robin, free, circuit_chain
+- **Circuit Breakers**: Closed→Open→Half-Open with automatic probe recovery
+- **Health Probes**: Background 5s checks every 30s
+- **Request Coalescing**: Deduplicates identical concurrent requests
+- **Streaming SSE**: Proper flush every 32KB for real-time responses
+- **Retry with Backoff**: 3 attempts per provider with exponential backoff
+- **Rate Limiting**: Token bucket per provider (60/min paid, 10/min free)
+- **Latency Tracking**: Exponential moving average per provider
+- **Sticky Sessions**: Session affinity via Authorization header
+- **Model Mapping**: Map local model IDs to provider-specific IDs
+
+### Built-in Providers (13)
+
+| Provider | Base URL | Free Tier | Models |
+|----------|----------|-----------|--------|
+| llama-swap | http://127.0.0.1:25100/v1 | ✓ | local-fast, local-quality, local-longctx |
+| openrouter | https://openrouter.ai/api/v1 | | openrouter/auto |
+| nvidia | https://integrate.api.nvidia.com/v1 | ✓ | llama-3.1-nemotron-70b |
+| groq | https://api.groq.com/openai/v1 | ✓ | llama-3.1-70b-versatile |
+| together | https://api.together.xyz/v1 | | llama-3.1-70b |
+| cerebras | https://api.cerebras.ai/v1 | ✓ | llama-3.1-70b |
+| fireworks | https://api.fireworks.ai/inference/v1 | | llama-3.1-70b |
+| hyperbolic | https://api.hyperbolic.xyz/v1 | ✓ | llama-3.1-70b |
+| github | https://models.inference.ai.azure.com | ✓ | Phi-4, gpt-4o-mini |
+| mistral | https://api.mistral.ai/v1 | | mistral-large-2 |
+| openai | https://api.openai.com/v1 | | gpt-4o, gpt-4o-mini, o1-preview |
+| perplexity | https://api.perplexity.ai | | sonar |
+| siliconflow | https://api.siliconflow.cn/v1 | ✓ | deepseek-v2 |
+
+### Configuration
+
+```yaml
+astMatrix:
+  enabled: true
+  strategy: hybrid
+  astStrategy: ast_race
+  requestTimeout: 95
+  maxRetries: 3
+  healthProbeInterval: 30
+  enableCoalescing: true
+  providers:
+    openrouter:
+      baseUrl: https://openrouter.ai/api/v1
+      keyEnv: OPENROUTER_API_KEY
+      models: [openrouter/auto]
+    groq:
+      baseUrl: https://api.groq.com/openai/v1
+      keyEnv: GROQ_API_KEY
+      freeTier: true
+      models: [groq/llama-3.1-70b-versatile]
+```
+
+### Status Endpoint
+
+```bash
+curl http://localhost:25100/astmatrix/status
+curl http://localhost:25100/astmatrix/metrics
+```
+
+### Architecture
+
+| File | Purpose |
+|------|---------|
+| `config.go` | YAML configuration structs |
+| `circuit.go` | Circuit breaker with half-open support |
+| `coalescer.go` | Request deduplication |
+| `metrics.go` | Latency histograms, error rates |
+| `providers.go` | Provider registry (13 built-in) |
+| `healthdb.go` | SQLite health DB + sticky sessions |
+| `ratelimit.go` | Token bucket rate limiter |
+| `router.go` | Main HTTP handler (8 strategies) |
+| `matrix.go` | Coordinator wrapper |
+| `ui.go` | Status/metrics HTTP endpoints |

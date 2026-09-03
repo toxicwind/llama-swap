@@ -2,7 +2,6 @@ package astmatrix
 
 import (
 	"os"
-	"regexp"
 	"strings"
 )
 
@@ -15,35 +14,80 @@ type provider struct {
 	models    []string
 }
 
-// defaultProviders returns the built-in sovereign provider registry.
-// It merges the hand-curated core providers with the extended registry
-// from free_providers (only openai-format providers with non-empty BaseURL).
-func defaultProviders() map[string]*provider {
-	providers := map[string]*provider{
+// ProviderRegistry manages configured providers.
+type ProviderRegistry struct {
+	providers map[string]Provider
+	byModel   map[string][]string
+}
+
+func NewProviderRegistry(cfg map[string]ProviderCfg) *ProviderRegistry {
+	pr := &ProviderRegistry{
+		providers: make(map[string]Provider),
+		byModel:   make(map[string][]string),
+	}
+	defaults := defaultProviders()
+	for id, p := range defaults {
+		pr.providers[id] = p
+	}
+	for id, pcfg := range cfg {
+		p := Provider{
+			ID: id, BaseURL: pcfg.BaseURL, NoAuth: pcfg.NoAuth,
+			FreeTier: pcfg.FreeTier, Models: pcfg.Models,
+			ModelMap: pcfg.ModelMap, Weight: pcfg.Weight, ELO: pcfg.ELO,
+		}
+		if pcfg.KeyEnv != "" { p.APIKey = os.Getenv(pcfg.KeyEnv) }
+		if p.APIKey == "" && pcfg.KeyEnvAlt != "" { p.APIKey = os.Getenv(pcfg.KeyEnvAlt) }
+		pr.providers[id] = p
+	}
+	pr.rebuildIndex()
+	return pr
+}
+
+func (pr *ProviderRegistry) rebuildIndex() {
+	pr.byModel = make(map[string][]string)
+	for id, p := range pr.providers {
+		for _, m := range p.Models { pr.byModel[m] = append(pr.byModel[m], id) }
+		for local := range p.ModelMap { pr.byModel[local] = append(pr.byModel[local], id) }
+	}
+}
+
+func (pr *ProviderRegistry) ForModel(modelID string) []Provider {
+	ids, ok := pr.byModel[modelID]
+	if !ok {
+		var all []Provider
+		for _, p := range pr.providers { all = append(all, p) }
+		return all
+	}
+	var result []Provider
+	for _, id := range ids {
+		if p, ok := pr.providers[id]; ok { result = append(result, p) }
+	}
+	return result
+}
+
+func (pr *ProviderRegistry) Get(id string) (Provider, bool) {
+	p, ok := pr.providers[id]
+	return p, ok
+}
+
+func (pr *ProviderRegistry) All() []Provider {
+	var result []Provider
+	for _, p := range pr.providers { result = append(result, p) }
+	return result
+}
+
+func defaultProviders() map[string]Provider {
+	return map[string]Provider{
 		"llama-swap": {
-			base:   "http://127.0.0.1:25100/v1",
-			noAuth: true,
-			models: []string{"local-fast", "local-quality", "local-longctx"},
+			ID: "llama-swap", BaseURL: "http://127.0.0.1:25100/v1",
+			NoAuth: true, Models: []string{"local-fast", "local-quality", "local-longctx"},
+			Weight: 1.0, ELO: 1600,
 		},
 		"openrouter": {
-			base:   "https://openrouter.ai/api/v1",
-			keyEnv: "OPENROUTER_API_KEY",
-			models: []string{
-				// Verified working 2026-07-28
-				"google/gemma-4-31b-it:free",
-				"google/gemma-4-26b-a4b-it:free",
-				"nvidia/nemotron-3-super-120b-a12b:free",
-				"nvidia/nemotron-3-nano-30b-a3b:free",
-				"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-				"nvidia/nemotron-nano-12b-v2-vl:free",
-				"nvidia/nemotron-nano-9b-v2:free",
-				"nvidia/nemotron-3-ultra-550b-a55b:free",
-				"poolside/laguna-xs-2.1:free",
-				"poolside/laguna-s-2.1:free",
-				"cohere/north-mini-code:free",
-				"openai/gpt-oss-20b:free",
-				"inclusionai/ling-3.0-flash:free",
-			},
+			ID: "openrouter", BaseURL: "https://openrouter.ai/api/v1",
+			APIKey: os.Getenv("OPENROUTER_API_KEY"),
+			Models: []string{"openrouter/auto", "openrouter/optimus-alpha"},
+			Weight: 1.0, ELO: 1500,
 		},
 		"nvidia": {
 			base:      "https://integrate.api.nvidia.com/v1",
@@ -65,64 +109,66 @@ func defaultProviders() map[string]*provider {
 			},
 		},
 		"groq": {
-			base:   "https://api.groq.com/openai/v1",
-			keyEnv: "GROQ_API_KEY",
-			models: []string{
-				"llama-3.3-70b-versatile",
-				"qwen/qwen3-32b",
-				"qwen/qwen3.6-27b",
-				"openai/gpt-oss-120b",
-				"openai/gpt-oss-20b",
-				"meta-llama/llama-4-scout-17b-16e-instruct",
-			},
+			ID: "groq", BaseURL: "https://api.groq.com/openai/v1",
+			APIKey: os.Getenv("GROQ_API_KEY"), FreeTier: true,
+			Models: []string{"groq/llama-3.1-70b-versatile", "groq/mixtral-8x7b"},
+			Weight: 1.5, ELO: 1580,
+		},
+		"together": {
+			ID: "together", BaseURL: "https://api.together.xyz/v1",
+			APIKey: os.Getenv("TOGETHER_API_KEY"),
+			Models: []string{"together/llama-3.1-70b", "together/mixtral-8x22b"},
+			Weight: 1.0, ELO: 1520,
 		},
 		"cerebras": {
-			base:   "https://api.cerebras.ai/v1",
-			keyEnv: "CEREBRAS_API_KEY",
-			models: []string{},
+			ID: "cerebras", BaseURL: "https://api.cerebras.ai/v1",
+			APIKey: os.Getenv("CEREBRAS_API_KEY"), FreeTier: true,
+			Models: []string{"cerebras/llama-3.1-70b"},
+			Weight: 1.3, ELO: 1560,
 		},
-		"google": {
-			base:   "https://generativelanguage.googleapis.com/v1beta/openai",
-			keyEnv: "GOOGLE_API_KEY",
-			models: []string{
-				"models/gemini-2.5-flash",
-				"models/gemini-2.5-flash-lite",
-				"models/gemini-2.0-flash",
-				"models/gemma-4-31b-it",
-			},
+		"fireworks": {
+			ID: "fireworks", BaseURL: "https://api.fireworks.ai/inference/v1",
+			APIKey: os.Getenv("FIREWORKS_API_KEY"),
+			Models: []string{"fireworks/llama-3.1-70b", "fireworks/mixtral-8x22b"},
+			Weight: 1.0, ELO: 1510,
+		},
+		"hyperbolic": {
+			ID: "hyperbolic", BaseURL: "https://api.hyperbolic.xyz/v1",
+			APIKey: os.Getenv("HYPERBOLIC_API_KEY"), FreeTier: true,
+			Models: []string{"hyperbolic/llama-3.1-70b"},
+			Weight: 1.0, ELO: 1490,
+		},
+		"github": {
+			ID: "github", BaseURL: "https://models.inference.ai.azure.com",
+			APIKey: os.Getenv("GITHUB_TOKEN"), FreeTier: true,
+			Models: []string{"github/Phi-4", "github/gpt-4o-mini"},
+			Weight: 1.0, ELO: 1500,
 		},
 		"mistral": {
-			base:   "https://api.mistral.ai/v1",
-			keyEnv: "MISTRAL_API_KEY",
-			models: []string{
-				"mistral-small-latest",
-				"codestral-latest",
-				"mistral-large-latest",
-				"mistral-medium-latest",
-			},
+			ID: "mistral", BaseURL: "https://api.mistral.ai/v1",
+			APIKey: os.Getenv("MISTRAL_API_KEY"),
+			Models: []string{"mistral/mistral-large-2"},
+			Weight: 1.0, ELO: 1530,
+		},
+		"openai": {
+			ID: "openai", BaseURL: "https://api.openai.com/v1",
+			APIKey: os.Getenv("OPENAI_API_KEY"),
+			Models: []string{"gpt-4o", "gpt-4o-mini", "o1-preview"},
+			Weight: 1.0, ELO: 1650,
+		},
+		"perplexity": {
+			ID: "perplexity", BaseURL: "https://api.perplexity.ai",
+			APIKey: os.Getenv("PERPLEXITY_API_KEY"),
+			Models: []string{"perplexity/sonar"},
+			Weight: 1.0, ELO: 1480,
+		},
+		"siliconflow": {
+			ID: "siliconflow", BaseURL: "https://api.siliconflow.cn/v1",
+			APIKey: os.Getenv("SILICONFLOW_API_KEY"), FreeTier: true,
+			Models: []string{"siliconflow/deepseek-v2"},
+			Weight: 1.0, ELO: 1470,
 		},
 	}
-
-	// Merge extended providers from registry (skip duplicates, skip non-openai, skip empty BaseURL)
-	for id, reg := range RegistryProviders {
-		if _, exists := providers[id]; exists {
-			continue // core provider takes precedence
-		}
-		if reg.BaseURL == "" || reg.Format != "openai" {
-			continue // can only route openai-format providers
-		}
-		var models []string
-		for _, m := range reg.Models {
-			models = append(models, m.ID)
-		}
-		providers[id] = &provider{
-			base:   reg.BaseURL,
-			keyEnv: keyEnvFor(id),
-			noAuth: reg.NoAuth,
-			models: models,
-		}
-	}
-	return providers
 }
 
 // codingAlias maps friendly alias -> [provider, model] or nil for auto/fcm.
